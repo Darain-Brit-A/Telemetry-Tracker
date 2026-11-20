@@ -2,6 +2,7 @@
 
     python tools/export_collector.py col-acme-dc1                  # -> collector-col-acme-dc1.zip
     python tools/export_collector.py col-air-del --out D:/usb/
+    python tools/export_collector.py col-acme-dc1 col-acme-cloud col-globex-nyc   # all of Tier 1, one zip
 
 Run it on the SaaS machine after `python setup_env.py --saas-host <SaaS IP or name>`. The zip holds only
 what that collector needs:
@@ -53,54 +54,62 @@ This zip contains the collector's secret and private key: delete it once unpacke
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("collector", help="collector id, e.g. col-acme-dc1")
+    ap.add_argument("collectors", nargs="+", metavar="collector",
+                    help="one or more collector ids, e.g. col-acme-dc1 (several = one bundle for one machine)")
     ap.add_argument("--out", default=".", help="folder or .zip path for the bundle (default: current folder)")
     args = ap.parse_args()
-    cid = args.collector
-    cfg = load_json(os.path.join(CONFIG_DIR, "collectors", f"{cid}.json"))
-    if not cfg:
-        sys.exit(f"unknown collector {cid} (run setup_env.py first)")
-    if "127.0.0.1" in (cfg.get("saas_url") or "") or "localhost" in (cfg.get("saas_url") or ""):
-        print(f"!! {cid} points at {cfg.get('saas_url')}, which only works on this machine.\n"
-              f"   Run: python setup_env.py --saas-host <this machine's LAN IP>   and export again.")
-        sys.exit(1)
-    files = {}
-    for key in ("ca_file", "client_cert", "client_key"):
-        p = cfg.get(key)
-        if not p:
-            continue
-        if os.path.isabs(p):
-            rel = os.path.relpath(p, CONFIG_DIR).replace(os.sep, "/")
-            if rel.startswith(".."):
-                sys.exit(f"{key} {p} is outside the config folder; re-run setup_env.py")
-            cfg[key] = rel
-        files[f"config/{cfg[key]}"] = os.path.join(CONFIG_DIR, cfg[key])
-    for name, path in files.items():
+    sim = load_json(os.path.join(CONFIG_DIR, "simulator.json"), {}) or {}
+    sim_cols, configs, files, readmes = {}, {}, {}, []
+    for cid in args.collectors:
+        cfg = load_json(os.path.join(CONFIG_DIR, "collectors", f"{cid}.json"))
+        if not cfg:
+            sys.exit(f"unknown collector {cid} (run setup_env.py first)")
+        if "127.0.0.1" in (cfg.get("saas_url") or "") or "localhost" in (cfg.get("saas_url") or ""):
+            print(f"!! {cid} points at {cfg.get('saas_url')}, which only works on this machine.\n"
+                  f"   Run: python setup_env.py --saas-host <this machine's LAN IP>   and export again.")
+            sys.exit(1)
+        for key in ("ca_file", "client_cert", "client_key"):
+            path = cfg.get(key)
+            if not path:
+                continue
+            if os.path.isabs(path):
+                rel = os.path.relpath(path, CONFIG_DIR).replace(os.sep, "/")
+                if rel.startswith(".."):
+                    sys.exit(f"{key} {path} is outside the config folder; re-run setup_env.py")
+                cfg[key] = rel
+            files[f"config/{cfg[key]}"] = os.path.join(CONFIG_DIR, cfg[key])
+        if cid in sim.get("collectors", {}):
+            sim_cols[cid] = sim["collectors"][cid]
+        configs[cid] = cfg
+        host = cfg["saas_url"].split("://", 1)[1].rsplit(":", 1)[0].strip("[]")
+        port = cfg["saas_url"].rsplit(":", 1)[1]
+        feeder = "the simulator for its hosts" if cid in sim_cols else (
+            "the OpenAQ poller (needs config/pollution.json with your OpenAQ key)" if cfg.get("openaq_locations")
+            else "nothing else: point your own sources at its /ingest")
+        readmes.append(README.format(cid=cid, site=cfg.get("site"), host=host, port=port,
+                                     ui_port=cfg.get("ui_port"), feeder=feeder))
+    for path in files.values():
         if not os.path.exists(path):
             sys.exit(f"missing {path} - run setup_env.py")
-    sim = load_json(os.path.join(CONFIG_DIR, "simulator.json"), {}) or {}
-    sim_one = None
-    if cid in sim.get("collectors", {}):
-        sim_one = dict(sim, collectors={cid: sim["collectors"][cid]})
-    host = cfg["saas_url"].split("://", 1)[1].rsplit(":", 1)[0].strip("[]")
-    port = cfg["saas_url"].rsplit(":", 1)[1]
+    ids = list(configs)
     out = args.out
     if not out.endswith(".zip"):
         os.makedirs(out, exist_ok=True)
-        out = os.path.join(out, f"collector-{cid}.zip")
-    feeder = "the simulator for its hosts" if sim_one else (
-        "the OpenAQ poller (needs config/pollution.json with your OpenAQ key)" if cfg.get("openaq_locations")
-        else "nothing else: point your own sources at its /ingest")
+        out = os.path.join(out, f"collector-{ids[0]}.zip" if len(ids) == 1 else f"collectors-{len(ids)}.zip")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr(f"config/collectors/{cid}.json", json.dumps(cfg, indent=2))
+        for cid, cfg in configs.items():
+            z.writestr(f"config/collectors/{cid}.json", json.dumps(cfg, indent=2))
         for name, path in files.items():
             z.write(path, name)
-        if sim_one:
-            z.writestr("config/simulator.json", json.dumps(sim_one, indent=2))
-        z.writestr("COLLECTOR-README.txt", README.format(cid=cid, site=cfg.get("site"), host=host, port=port,
-                                                         ui_port=cfg.get("ui_port"), feeder=feeder))
-    print(f"wrote {out}  ({cid} -> {cfg['saas_url']})")
-    print("   contains this collector's secret and private key: move it like a password, delete after unpacking")
+        if sim_cols:
+            # one simulator config covering every simulated collector in this bundle
+            z.writestr("config/simulator.json", json.dumps(dict(sim, collectors=sim_cols), indent=2))
+        start_cmd = "python run_all.py " + " ".join(f"--collector {c}" for c in ids)
+        z.writestr("COLLECTOR-README.txt", (f"Start everything in this bundle with:\n    {start_cmd}\n\n" if len(ids) > 1 else "")
+                   + "\n\n".join(readmes))
+    print(f"wrote {out}  ({', '.join(ids)} -> {configs[ids[0]]['saas_url']})")
+    print(f"   on the other machine: unpack into the project folder, then  {' '.join(['python run_all.py'] + [f'--collector {c}' for c in ids])}")
+    print("   contains these collectors' secrets and private keys: move it like a password, delete after unpacking")
 
 
 if __name__ == "__main__":

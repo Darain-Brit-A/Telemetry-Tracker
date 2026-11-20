@@ -66,6 +66,17 @@ through the laptop's Wi-Fi address, and the SaaS dashboard showed the collector 
    private key, other collectors' secrets or your OpenAQ key. It **does** contain this collector's secret
    and private key: copy it like a password (USB stick, `scp`), and delete it after unpacking.
 
+   **Whole Tier 1 on laptop B:** list every collector; you get one zip and one start command:
+
+   ```powershell
+   python tools/export_collector.py col-acme-dc1 col-acme-cloud col-globex-nyc col-air-blr col-air-del col-air-bom col-air-maa
+   ```
+
+   then start only the SaaS on laptop A with `python run_all.py --saas-only`, and on laptop B
+   `python run_all.py --collector col-acme-dc1 --collector col-acme-cloud ...` (the README in the zip has the
+   exact line). For the air-quality collectors, also copy `config/pollution.json` (your OpenAQ key) to laptop B
+   yourself; it is deliberately not in the bundle.
+
 5. **Start the SaaS without that collector:**
 
    ```powershell
