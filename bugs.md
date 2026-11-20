@@ -9,26 +9,26 @@ The fix plan is in [plan.md](plan.md).
 
 ## Summary
 
-| ID | Severity | Bug | How found |
-|---|---|---|---|
-| B1 | Critical | One idle TCP connection to the TLS port freezes all collector ingest | Reproduced |
-| B2 | High | One malformed payload makes the whole batch fail, and the collector retries it forever | Reproduced |
-| B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced |
-| B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced |
-| B5 | High | Search on both proof panels treats `_` and `%` as wildcards and reports false leaks | Reproduced |
-| B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced |
-| B7 | Medium | No brute-force protection on dashboard login | Reproduced |
-| B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced |
-| B9 | Medium | Collector sequence numbers restart after a long idle period, corrupting gap detection | Code reading |
-| B10 | Medium | A remediation command can get stuck in "dispatched" forever | Code reading |
-| B11 | Medium | Any logged-in user can skew the dashboard latency SLO | Code reading |
-| B12 | Low | "Heal all" on one collector console heals every tenant's simulated faults | Code reading |
-| B13 | Low | Collector CPU in heartbeats is measured over the wrong interval | Code reading |
-| B14 | Low | Memory grows without limit in several in-process caches | Code reading |
-| B15 | Low | SaaS forgets per-collector sequence state on restart | Code reading |
-| B16 | Low | Validation report prints "render-ack p95 0.00s" when there were no samples | Code reading |
-| B17 | Low | An acknowledgement digest mismatch is retried forever with no escalation | Code reading |
-| B18 | Low | Stream adapter can map a record's `name` / `value` fields as a metric by mistake | Code reading |
+| ID | Severity | Bug | How found | Status |
+|---|---|---|---|---|
+| B1 | Critical | One idle TCP connection to the TLS port freezes all collector ingest | Reproduced | Fixed |
+| B2 | High | One malformed payload makes the whole batch fail, and the collector retries it forever | Reproduced | Open |
+| B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced | Open |
+| B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | Open |
+| B5 | High | Search on both proof panels treats `_` and `%` as wildcards and reports false leaks | Reproduced | Open |
+| B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced | Open |
+| B7 | Medium | No brute-force protection on dashboard login | Reproduced | Open |
+| B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced | Open |
+| B9 | Medium | Collector sequence numbers restart after a long idle period, corrupting gap detection | Code reading | Open |
+| B10 | Medium | A remediation command can get stuck in "dispatched" forever | Code reading | Open |
+| B11 | Medium | Any logged-in user can skew the dashboard latency SLO | Code reading | Open |
+| B12 | Low | "Heal all" on one collector console heals every tenant's simulated faults | Code reading | Open |
+| B13 | Low | Collector CPU in heartbeats is measured over the wrong interval | Code reading | Open |
+| B14 | Low | Memory grows without limit in several in-process caches | Code reading | Open |
+| B15 | Low | SaaS forgets per-collector sequence state on restart | Code reading | Open |
+| B16 | Low | Validation report prints "render-ack p95 0.00s" when there were no samples | Code reading | Open |
+| B17 | Low | An acknowledgement digest mismatch is retried forever with no escalation | Code reading | Open |
+| B18 | Low | Stream adapter can map a record's `name` / `value` fields as a metric by mistake | Code reading | Open |
 
 ---
 
@@ -50,6 +50,12 @@ after it disconnects:                        HTTP 401 in 0.01s
 **Impact:** anyone who can reach port 8443 can stop all telemetry with one socket, no credentials
 needed. In a demo, a stuck health checker or port scanner would make every collector look offline.
 The same server also has no socket timeouts, so slow clients pin threads indefinitely.
+
+**Status: fixed** (commit "Fix B1"). The listening socket stays plain and each connection does its
+TLS handshake in its own thread with a 10 s timeout (`common/tlsserver.py`). All handlers now have a
+30 s socket timeout. Test: `tests/test_tls_server.py` failed with "handshake operation timed out"
+before the change and passes after it; `verify.py` has a regression check. Live re-run of the
+reproduction: `HTTP 401 in 0.01s` while an idle client is connected.
 
 ## B2. One malformed payload poisons the whole batch (High)
 

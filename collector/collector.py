@@ -586,6 +586,7 @@ class Collector:
 def make_handler(col):
     class H(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        timeout = 30
 
         def log_message(self, *a):
             pass

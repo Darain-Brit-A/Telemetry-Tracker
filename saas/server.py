@@ -28,6 +28,7 @@ import urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.policy import dlp_scan, load_policy, validate_inbound  # noqa: E402
+from common.tlsserver import TLSThreadingHTTPServer  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
 from common.util import CERT_DIR, CONFIG_DIR, DATA_DIR, dumps, iso, load_json, now_ms, parse_iso, save_json, \
     sha256_hex, verify_sig  # noqa: E402
@@ -325,6 +326,7 @@ APP = None
 
 class Base(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 30            # slow or idle clients release their thread instead of holding it forever
 
     def log_message(self, *a):
         pass
@@ -539,12 +541,14 @@ def main():
     APP = App()
     http.server.ThreadingHTTPServer.request_queue_size = 256   # default backlog of 5 refused bursts
     threading.Thread(target=engine_loop, daemon=True).start()
-    ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
     if APP.reg.get("tls"):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.load_cert_chain(os.path.join(CERT_DIR, "server.crt"), os.path.join(CERT_DIR, "server.key"))
-        ingest.socket = ctx.wrap_socket(ingest.socket, server_side=True)
+        # handshake per connection thread, never in accept() (bug B1)
+        ingest = TLSThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler, ctx)
+    else:
+        ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
     threading.Thread(target=ingest.serve_forever, daemon=True).start()
     dash = http.server.ThreadingHTTPServer(("127.0.0.1", APP.reg["dashboard_port"]), DashHandler)
     print(f"[saas] ingest {APP.scheme}://127.0.0.1:{APP.ingest_port} (regions: {', '.join(APP.reg['regions'])})  "
