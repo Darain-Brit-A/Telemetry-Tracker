@@ -22,7 +22,7 @@ The fix plan is in [plan.md](plan.md).
 | B9 | Medium | Collector sequence numbers restart after a long idle period, corrupting gap detection | Code reading | Open |
 | B10 | Medium | A remediation command can get stuck in "dispatched" forever | Code reading | Open |
 | B11 | Medium | Any logged-in user can skew the dashboard latency SLO | Code reading | Open |
-| B12 | Low | "Heal all" on one collector console heals every tenant's simulated faults | Code reading | Open |
+| B12 | Low | "Heal all" on one collector console heals every tenant's simulated faults | Code reading | Fixed |
 | B13 | Low | Collector CPU in heartbeats is measured over the wrong interval | Code reading | Open |
 | B14 | Low | Memory grows without limit in several in-process caches | Code reading | Open |
 | B15 | Low | SaaS forgets per-collector sequence state on restart | Code reading | Open |
@@ -224,6 +224,10 @@ every collector.
 
 **What happens:** pressing "Heal all" on the Globex console also ends a scenario running for Acme.
 This only affects the simulator, but it can wreck a live demo that runs two scenarios at once.
+
+**Status: fixed** (commit "Fix B12"). Heal without a host now clears only the hosts of the collector
+that asked, including their "source goes silent" state. Test: `tests/test_simulator.py` (healing
+collector A wiped collector B's CPU spike before the change; it is left running now).
 
 ## B13. Collector CPU in heartbeats measured over the wrong interval (Low)
 
