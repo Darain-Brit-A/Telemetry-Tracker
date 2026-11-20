@@ -39,6 +39,7 @@ from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_js
     sign  # noqa: E402
 
 VERSION = "1.4.0"
+MAX_FUTURE_MS = 5000   # readings further ahead than this are treated as clock skew
 METRIC_NAMES = None  # filled from policy
 UI_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
 UI_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.js")
@@ -176,11 +177,14 @@ class Collector:
         """Accept one raw event (metric | log | auth). Raw content is stored locally only."""
         recv = now_ms()
         try:
-            ts = parse_iso(ev.get("ts")) if ev.get("ts") is not None else recv
+            # a timestamp without an offset is local time at this site, not UTC (bug B3)
+            ts = parse_iso(ev.get("ts"), self.cfg.get("tz")) if ev.get("ts") is not None else recv
         except Exception:
             ts = recv
         host = str(ev.get("host", "unknown"))[:64]
         etype = ev.get("type", "log")
+        if ts > recv + MAX_FUTURE_MS:
+            ts = self._clock_skew(host, ts, recv)
         self.stats["raw_events_total"] += 1
         raw = json.dumps(ev) if transport == "http" else ev.get("_raw", json.dumps(ev))
         redacted, findings = redact_text(raw)
@@ -197,6 +201,27 @@ class Collector:
                        ev.get("method", "ssh"))
         else:
             self._log(host, ts, str(ev.get("level", "INFO")).upper(), str(ev.get("message", "")))
+
+    def _clock_skew(self, host, ts, recv):
+        """A reading stamped in the future would sit in a window that never closes, so the source would
+        silently vanish (bug B3). Keep the raw record as sent, but aggregate it at the receive time and
+        tell the SaaS how far ahead the source's clock is."""
+        skew_s = round((ts - recv) / 1000)
+        self.stats["clock_skew_events"] += 1
+        with self.lock:
+            key = ("skew", host)
+            last_ts, n = self.last_emit.get(key, (0, 0))
+            n += 1
+            if recv - last_ts >= 60_000:
+                self.last_emit[key] = (recv, 0)
+                self.pending_events.append(self._ev(
+                    host, recv, "source.clock_skew", "low", n,
+                    f"source clock ahead by {skew_s}s; {n} reading(s) re-stamped with collector receive time"))
+                self.findings.appendleft({"ts": iso(recv), "host": host, "kind": "clock_skew",
+                                          "detail": f"timestamps {skew_s}s in the future (clock or timezone wrong)"})
+            else:
+                self.last_emit[key] = (last_ts, n)
+        return recv
 
     def ingest_syslog(self, line):
         m = SYSLOG_RX.match(line.strip())

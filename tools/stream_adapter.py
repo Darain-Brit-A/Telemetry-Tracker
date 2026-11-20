@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from common.util import CONFIG_DIR, iso, load_json, now_ms  # noqa: E402
+from common.util import CONFIG_DIR, _zone, iso, load_json, now_ms  # noqa: E402
 
 TS_KEYS = ["ts", "timestamp", "time", "@timestamp", "at", "event_time", "eventTime", "event_time_utc", "datetime",
            "date"]
@@ -92,8 +92,9 @@ def _num(v):
     return None
 
 
-def parse_ts(v):
-    """ISO-8601 (any offset), epoch seconds, or epoch milliseconds -> epoch ms (UTC)."""
+def parse_ts(v, default_tz=None):
+    """ISO-8601 (any offset), epoch seconds, or epoch milliseconds -> epoch ms (UTC). An ISO timestamp
+    without an offset is read in `default_tz` (IANA name) when given, otherwise UTC."""
     if v is None:
         return None
     n = _num(v) if not (isinstance(v, str) and ("-" in v[1:] or "T" in v)) else None
@@ -108,7 +109,7 @@ def parse_ts(v):
         s = s.replace(" ", "T", 1)
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=_zone(default_tz) if default_tz else timezone.utc)
     return int(dt.timestamp() * 1000)
 
 
@@ -162,10 +163,10 @@ def map_record(rec, mapping=None, default_tz="UTC"):
     """Return a list of native collector events (metric / auth / log) for one foreign record."""
     mapping = mapping or {}
     ts_raw = _dig(rec, mapping["ts"]) if mapping.get("ts") else _first(rec, TS_KEYS)
-    ts = parse_ts(ts_raw) if ts_raw is not None else now_ms()
+    tz = _first(rec, TZ_KEYS) or default_tz
+    ts = parse_ts(ts_raw, tz) if ts_raw is not None else now_ms()
     host = _dig(rec, mapping["host"]) if mapping.get("host") else _first(rec, HOST_KEYS)
     host = str(host or "unknown-source")[:64]
-    tz = _first(rec, TZ_KEYS) or default_tz
     base = {"host": host, "ts": iso(ts), "tz": tz}
     for k in ("role", "service"):
         if rec.get(k):

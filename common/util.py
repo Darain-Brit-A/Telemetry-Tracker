@@ -26,14 +26,23 @@ def iso(ms=None):
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{int(ms % 1000):03d}Z"
 
 
-def parse_iso(s):
-    """Parse ISO-8601 (any offset) to epoch ms (UTC)."""
+def _zone(name):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:          # no tz database on this machine, or unknown name: fall back to UTC
+        return timezone.utc
+
+
+def parse_iso(s, default_tz=None):
+    """Parse ISO-8601 to epoch ms (UTC). A timestamp without an offset is read in `default_tz`
+    (an IANA name such as "Asia/Kolkata") when given, otherwise as UTC."""
     if isinstance(s, (int, float)):
         return int(s)
     s = s.strip().replace("Z", "+00:00")
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=_zone(default_tz) if default_tz else timezone.utc)
     return int(dt.timestamp() * 1000)
 
 

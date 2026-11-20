@@ -13,7 +13,7 @@ The fix plan is in [plan.md](plan.md).
 |---|---|---|---|---|
 | B1 | Critical | One idle TCP connection to the TLS port freezes all collector ingest | Reproduced | Fixed |
 | B2 | High | One malformed payload makes the whole batch fail, and the collector retries it forever | Reproduced | Fixed |
-| B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced | Open |
+| B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced | Fixed |
 | B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | Open |
 | B5 | Medium | Search on both proof panels treats `_` and `%` as wildcards and can report false leaks | Reproduced | Fixed |
 | B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced | Open |
@@ -97,6 +97,15 @@ future-1: sent 15 readings -> NOT VISIBLE ON SAAS AT ALL
 **Impact:** a device whose clock runs ahead, or that sends local time without an offset (for example
 IST written as if it were UTC, 5.5 hours ahead), is silently invisible for hours. Nothing tells the
 operator why. This is likely with an unfamiliar organizer stream.
+
+**Status: fixed** (commit "Fix B3"). A reading more than 5 s in the future is kept as sent in the raw
+store but aggregated at the collector's receive time, and the collector sends an allow-listed
+`source.clock_skew` event (count and skew in seconds only). The SaaS turns that into a "Clock skew on
+<service>" incident with an explanation. Timestamps without an offset are read in the collector's
+configured timezone (and in the adapter's `--tz`), not as UTC. Tests: `tests/test_clock_skew.py`
+(3 of 4 failed before; the 2 s jitter case already passed) plus an adapter timezone test. Live
+re-run: `future-1` now shows as Excellent with its 40% CPU reading, and the dashboard shows
+"Clock skew on unknown" for it.
 
 ## B4. Drops are never detected (High)
 
