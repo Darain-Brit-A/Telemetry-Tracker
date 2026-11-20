@@ -12,7 +12,7 @@ The fix plan is in [plan.md](plan.md).
 | ID | Severity | Bug | How found | Status |
 |---|---|---|---|---|
 | B1 | Critical | One idle TCP connection to the TLS port freezes all collector ingest | Reproduced | Fixed |
-| B2 | High | One malformed payload makes the whole batch fail, and the collector retries it forever | Reproduced | Open |
+| B2 | High | One malformed payload makes the whole batch fail, and the collector retries it forever | Reproduced | Fixed |
 | B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced | Open |
 | B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | Open |
 | B5 | High | Search on both proof panels treats `_` and `%` as wildcards and reports false leaks | Reproduced | Open |
@@ -74,6 +74,14 @@ valid payload stored? False
 sequence order, the bad payload sits at the head of the queue and is retried forever, so nothing behind
 it is ever delivered. Any unexpected exception during processing (not only bad input) has the same
 effect. The allow-list check does not catch this because it validates field names, not value formats.
+
+**Status: fixed** (commit "Fix B2"). The SaaS validates value formats (timestamps, finite numbers,
+counts) as well as field names, and processes each payload inside its own SQLite savepoint, so an
+unexpected error rolls back and rejects only that payload. The collector marks rejected payloads and
+moves on; if a whole batch is refused with a 4xx it resends one payload at a time and rejects only
+the bad one. Tests: `tests/test_poison_batch.py` (4 tests, all failed before the change). Live
+re-run: the valid payload was accepted and stored, the malformed one rejected with
+"metrics[0].ts is not an ISO-8601 timestamp".
 
 ## B3. Future-dated events never reach the SaaS (High)
 

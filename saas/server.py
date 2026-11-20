@@ -96,37 +96,54 @@ class App:
                 recv = now_ms()
                 seq = p.get("seq") or 0
                 ooo = 1 if seq < self.max_seq.get(cid, 0) else 0
-                cur = st.x("INSERT OR IGNORE INTO payloads(payload_id,tenant_id,collector_id,seq,kind,created_ms,"
-                           "received_ms,sha256,bytes,body,out_of_order) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                           (pid, t, cid, seq, p["kind"], parse_iso(p["created_at"]), recv, sha256_hex(body),
-                            len(body), body, ooo))
-                if cur.rowcount == 0:
-                    stored = st.q1("SELECT sha256 FROM payloads WHERE payload_id=? AND tenant_id=?", (pid, t))
-                    if not stored or stored[0] != sha256_hex(body):
-                        # same ID, different bytes: a bug or tampering - never silently accept
-                        st.bump(t, "security", "payload_id_conflicts")
-                        self.engine.audit(t, f"collector:{cid}", "payload_id_conflict",
-                                          f"payload {pid} re-sent with different content; rejected")
-                        res["rejected"].append({"id": pid, "reason": "conflict: payload_id already stored with "
-                                                                  "different content", "code": 409})
-                        continue
-                    res["receipts"][pid] = stored[0]
-                    st.bump(t, "delivery", "duplicates_ignored")
-                    st.bump(t, f"collector:{cid}", "duplicates_ignored")
+                try:
+                    with st.savepoint():
+                        outcome = self._store_one(t, cid, p, pid, body, recv, seq, ooo, st)
+                except Exception as e:      # one bad payload must not take the batch down (bug B2)
+                    st.bump(t, "delivery", "processing_errors")
+                    self.engine.audit(t, f"collector:{cid}", "processing_error", f"payload {pid}: {e!r}"[:300])
+                    res["rejected"].append({"id": pid, "reason": f"processing error: {type(e).__name__}"})
+                    continue
+                if outcome == "conflict":
+                    res["rejected"].append({"id": pid, "reason": "conflict: payload_id already stored with "
+                                                              "different content", "code": 409})
+                    continue
+                if outcome[0] == "duplicate":
+                    res["receipts"][pid] = outcome[1]
                     res["duplicates"].append(pid)
                     continue
                 if ooo:
                     st.bump(t, "delivery", "out_of_order_payloads")
                     st.bump(t, f"collector:{cid}", "out_of_order_payloads")
                 self.max_seq[cid] = max(self.max_seq.get(cid, 0), seq)
-                self.engine.replay_delay = recv - parse_iso(p["created_at"])
-                try:
-                    self._process(t, cid, p, recv, st)
-                finally:
-                    self.engine.replay_delay = 0
                 res["accepted"].append(pid)
                 res["receipts"][pid] = sha256_hex(body)
         return res
+
+    def _store_one(self, t, cid, p, pid, body, recv, seq, ooo, st):
+        """Insert (idempotently) and process one payload. Runs inside a savepoint, so any exception
+        here rolls back only this payload. Returns "accepted", "conflict" or ("duplicate", sha)."""
+        cur = st.x("INSERT OR IGNORE INTO payloads(payload_id,tenant_id,collector_id,seq,kind,created_ms,"
+                   "received_ms,sha256,bytes,body,out_of_order) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                   (pid, t, cid, seq, p["kind"], parse_iso(p["created_at"]), recv, sha256_hex(body),
+                    len(body), body, ooo))
+        if cur.rowcount == 0:
+            stored = st.q1("SELECT sha256 FROM payloads WHERE payload_id=? AND tenant_id=?", (pid, t))
+            if not stored or stored[0] != sha256_hex(body):
+                # same ID, different bytes: a bug or tampering - never silently accept
+                st.bump(t, "security", "payload_id_conflicts")
+                self.engine.audit(t, f"collector:{cid}", "payload_id_conflict",
+                                  f"payload {pid} re-sent with different content; rejected")
+                return "conflict"
+            st.bump(t, "delivery", "duplicates_ignored")
+            st.bump(t, f"collector:{cid}", "duplicates_ignored")
+            return ("duplicate", stored[0])
+        self.engine.replay_delay = recv - parse_iso(p["created_at"])
+        try:
+            self._process(t, cid, p, recv, st)
+        finally:
+            self.engine.replay_delay = 0
+        return ("accepted", None)
 
     def _process(self, t, cid, p, recv, st):
         for s in p.get("sources", []):

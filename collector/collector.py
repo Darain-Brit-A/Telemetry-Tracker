@@ -113,6 +113,7 @@ class Collector:
         self.partition = False
         self.chaos = False
         self.held = {}
+        self.single_sends = 0          # >0: send one payload at a time to isolate a refused one
         self.last_error = ""
         self.link_state = "starting"
         self.last_delivery_ms = None
@@ -395,40 +396,9 @@ class Collector:
             try:
                 if not self.ingest_base:
                     self.discover()
-                rows = self.q("SELECT payload_id, body FROM egress WHERE status='pending' AND kind='metrics' "
-                              "ORDER BY seq LIMIT 100")
-                if not rows:
+                if not self.send_once():
                     time.sleep(0.2)
                     continue
-                batch = list(rows)
-                if self.chaos:
-                    batch = self._chaos(batch)
-                    if not batch:
-                        time.sleep(0.2)
-                        continue
-                ids = [r[0] for r in batch]
-                self.x(f"UPDATE egress SET attempts=attempts+1, last_attempt_ms=? WHERE payload_id IN "
-                       f"({','.join('?' * len(ids))})", (now_ms(), *ids))
-                body = ("[" + ",".join(r[1] for r in batch) + "]").encode()
-                res = self._request("POST", self.ingest_base + "/v1/ingest", body)
-                done = set(res.get("accepted", [])) | set(res.get("duplicates", []))
-                receipts = res.get("receipts", {})
-                t = now_ms()
-                for pid in done:
-                    mine = self.q("SELECT sha256 FROM egress WHERE payload_id=?", (pid,))
-                    if not mine or receipts.get(pid) != mine[0][0]:
-                        # the SaaS must echo the digest of the exact bytes we sent; otherwise keep it pending
-                        self.stats["ack_mismatch"] += 1
-                        self.x("UPDATE egress SET note=? WHERE payload_id=?",
-                               ("acknowledgement digest mismatch - will retry", pid))
-                        continue
-                    self.x("UPDATE egress SET status='delivered', delivered_ms=COALESCE(delivered_ms, ?), "
-                           "note=NULL WHERE payload_id=?", (t, pid))
-                for rj in res.get("rejected", []):
-                    self.x("UPDATE egress SET status='rejected', note=? WHERE payload_id=?", (rj["reason"], rj["id"]))
-                self.link_state = "connected"
-                self.last_delivery_ms = t
-                self.last_error = ""
                 backoff = 0.5
             except urllib.error.HTTPError as e:
                 if e.code == 421:              # misdirected: wrong region -> re-discover
@@ -440,6 +410,61 @@ class Collector:
                 self._fail(str(e)[:160])
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 4)    # capped so the backlog drains quickly on reconnect
+
+    def send_once(self):
+        """Send one batch from the outbox. Returns False when there is nothing to send.
+
+        If the SaaS refuses a whole batch with a client error (4xx other than auth / region / rate
+        limit), the next sends go one payload at a time; a single payload that is still refused is
+        marked rejected, so one bad payload can never block the queue behind it (bug B2)."""
+        limit = 1 if self.single_sends > 0 else 100
+        rows = self.q("SELECT payload_id, body FROM egress WHERE status='pending' AND kind='metrics' "
+                      "ORDER BY seq LIMIT ?", (limit,))
+        if not rows:
+            self.single_sends = 0
+            return False
+        batch = list(rows)
+        if self.chaos:
+            batch = self._chaos(batch)
+            if not batch:
+                return False
+        ids = [r[0] for r in batch]
+        self.x(f"UPDATE egress SET attempts=attempts+1, last_attempt_ms=? WHERE payload_id IN "
+               f"({','.join('?' * len(ids))})", (now_ms(), *ids))
+        body = ("[" + ",".join(r[1] for r in batch) + "]").encode()
+        try:
+            res = self._request("POST", self.ingest_base + "/v1/ingest", body)
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500 and e.code not in (401, 421, 429):
+                if len(batch) > 1:
+                    self.single_sends = len(batch)          # find the bad one
+                else:
+                    reason = f"refused by SaaS: HTTP {e.code}"
+                    self.x("UPDATE egress SET status='rejected', note=? WHERE payload_id=?", (reason, ids[0]))
+                    self.audit("collector", "payload_rejected", f"{ids[0]}: {reason}")
+                    self.single_sends = max(0, self.single_sends - 1)
+            raise
+        if self.single_sends:
+            self.single_sends -= 1
+        done = set(res.get("accepted", [])) | set(res.get("duplicates", []))
+        receipts = res.get("receipts", {})
+        t = now_ms()
+        for pid in done:
+            mine = self.q("SELECT sha256 FROM egress WHERE payload_id=?", (pid,))
+            if not mine or receipts.get(pid) != mine[0][0]:
+                # the SaaS must echo the digest of the exact bytes we sent; otherwise keep it pending
+                self.stats["ack_mismatch"] += 1
+                self.x("UPDATE egress SET note=? WHERE payload_id=?",
+                       ("acknowledgement digest mismatch - will retry", pid))
+                continue
+            self.x("UPDATE egress SET status='delivered', delivered_ms=COALESCE(delivered_ms, ?), "
+                   "note=NULL WHERE payload_id=?", (t, pid))
+        for rj in res.get("rejected", []):
+            self.x("UPDATE egress SET status='rejected', note=? WHERE payload_id=?", (rj["reason"], rj["id"]))
+        self.link_state = "connected"
+        self.last_delivery_ms = t
+        self.last_error = ""
+        return True
 
     def _fail(self, msg):
         self.stats["send_errors"] += 1

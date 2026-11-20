@@ -154,7 +154,51 @@ def enforce(payload, policy):
     return clean, dropped
 
 
+def _is_iso(v):
+    if not isinstance(v, str) or len(v) > 40:
+        return False
+    try:
+        from common.util import parse_iso
+        parse_iso(v)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) < 1e12
+
+
+def validate_values(payload):
+    """Value-level checks (field *names* are covered by the allow-list). Returns a list of problems."""
+    problems = []
+    if not _is_iso(payload.get("created_at")):
+        problems.append("created_at is not an ISO-8601 timestamp")
+    if payload.get("kind") == "heartbeat":
+        return problems
+    if not isinstance(payload.get("seq"), int) or isinstance(payload.get("seq"), bool) or payload["seq"] < 0:
+        problems.append("seq must be a non-negative integer")
+    for k in ("start", "end"):
+        if not _is_iso((payload.get("window") or {}).get(k)):
+            problems.append(f"window.{k} is not an ISO-8601 timestamp")
+    for i, m in enumerate(payload.get("metrics") or []):
+        if not _is_iso(m.get("ts")):
+            problems.append(f"metrics[{i}].ts is not an ISO-8601 timestamp")
+        if not all(_is_num(m.get(k)) for k in ("avg", "min", "max")):
+            problems.append(f"metrics[{i}] avg/min/max must be finite numbers")
+        if not isinstance(m.get("n"), int) or m["n"] < 1:
+            problems.append(f"metrics[{i}].n must be a positive integer")
+        if not isinstance(m.get("source_id"), str):
+            problems.append(f"metrics[{i}].source_id must be a string")
+    for i, e in enumerate(payload.get("events") or []):
+        if not _is_iso(e.get("ts")):
+            problems.append(f"events[{i}].ts is not an ISO-8601 timestamp")
+        if e.get("count") is not None and (not isinstance(e["count"], int) or e["count"] < 0):
+            problems.append(f"events[{i}].count must be a non-negative integer")
+    return problems[:10]
+
+
 def validate_inbound(payload, policy):
-    """SaaS-side: reject (not silently fix) anything outside the allow-list."""
+    """SaaS-side: reject (not silently fix) anything outside the allow-list or with malformed values."""
     clean, dropped = enforce(payload, policy)
-    return dropped
+    return dropped + validate_values(payload)

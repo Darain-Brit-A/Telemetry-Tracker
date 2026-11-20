@@ -79,6 +79,19 @@ class RegionStore:
             if outer:
                 self.db.execute("COMMIT")
 
+    @contextlib.contextmanager
+    def savepoint(self, name="p"):
+        """Roll back just this unit of work on error, keeping the surrounding transaction (bug B2)."""
+        with self.lock:
+            self.db.execute(f"SAVEPOINT {name}")
+            try:
+                yield
+            except BaseException:
+                self.db.execute(f"ROLLBACK TO {name}")
+                self.db.execute(f"RELEASE {name}")
+                raise
+            self.db.execute(f"RELEASE {name}")
+
     def q(self, sql, args=()):
         with self.lock:
             return self.db.execute(sql, args).fetchall()
