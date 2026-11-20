@@ -2,7 +2,7 @@
 
 > **Project:** End-to-end, secure AIOps observability (CICADA 2026, TechForcz x Atria Institute of Technology)
 > **Repository:** `Telemetry-Tracker`
-> **Status:** **implemented** (commits `5922f86` feature 2, `2d49600` feature 1, `9ce6be3` feature 3), with the
+> **Status:** **implemented** (commits `4435372` feature 2, `1fafb34` feature 1, `822b80f` feature 3), with the
 > measured results below. Revision 2 of the design was written after testing the first draft against real
 > data; a few details changed again while building and are marked "As built".
 
