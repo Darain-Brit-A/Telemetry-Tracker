@@ -44,6 +44,8 @@ MAX_FUTURE_MS = 5000   # readings further ahead than this are treated as clock s
 METRIC_NAMES = None  # filled from policy
 UI_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
 UI_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.js")
+UI_CSS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.css")
+BASE_CSS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common", "ui", "base.css")
 
 SYSLOG_RX = re.compile(r"^<(?P<pri>\d{1,3})>(?:1 )?(?P<ts>\d{4}-\d\d-\d\dT\S+|\w{3}\s+\d+\s[\d:]{8})\s+(?P<host>\S+)\s+(?P<app>[^:\[\s]+)(?:\[\d+\])?:\s*(?P<msg>.*)$")
 AUTH_FAIL_RX = re.compile(r"Failed (?:password|publickey) for (?:invalid user )?(?P<user>\S+) from (?P<ip>\S+)")
@@ -715,6 +717,9 @@ def make_handler(col):
             if self.path == "/ui.js":
                 with open(UI_JS, "rb") as f:
                     return self._send(200, f.read(), "application/javascript")
+            if self.path in ("/base.css", "/ui.css"):   # shared design system + console layout
+                with open(BASE_CSS if self.path == "/base.css" else UI_CSS, "rb") as f:
+                    return self._send(200, f.read(), "text/css; charset=utf-8")
             if self.path.startswith("/api/state"):
                 return self._send(200, col.state())
             if self.path.startswith("/api/egress/"):
