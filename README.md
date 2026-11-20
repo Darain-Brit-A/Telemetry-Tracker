@@ -10,7 +10,7 @@ used once, to create the demo CA.
 
 | Doc | Purpose |
 |---|---|
-| **[GUIDE.md](GUIDE.md)** | **Start here: the complete guide (how to run it, demo tour, how the AI works, security, testing, troubleshooting)** |
+| **[GUIDE.md](GUIDE.md)** | **Start here: the complete guide (run on one or two laptops, demo tour, how the AI works, security, testing, troubleshooting)** |
 | [docs/PHASE1_PROBLEM_AND_IDEATION.md](docs/PHASE1_PROBLEM_AND_IDEATION.md) | Phase 1: problem, use cases, features and MVP, what stays local, 24-hour plan |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Phase 2: trust boundary, every hop, payload schema, security, AIOps, reliability, scaling |
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Phase 4: live demo for every Section 8 scenario and answers to the Section 7 questions |
@@ -34,6 +34,20 @@ Open:
   :9102 (Acme, Frankfurt cloud), :9103 (Globex, New York)
 
 Wait about 30 s for baselines to arm, then inject scenarios from a collector console.
+
+## Two laptops: collector on one, SaaS on the other
+
+The collector and the SaaS can run on different machines on the same network; only the SaaS ingest port
+(8443, mutual TLS 1.3 + HMAC) is exposed. Full guide: [docs/TWO_MACHINES.md](docs/TWO_MACHINES.md).
+
+```powershell
+# laptop A (SaaS): use its LAN IP, open TCP 8443 in the firewall (admin), export the collector, start
+python setup_env.py --saas-host 192.168.1.20
+python tools/export_collector.py col-acme-dc1
+python run_all.py --exclude col-acme-dc1
+# laptop B (collector): unpack the zip into the project folder, then
+python run_all.py --collector col-acme-dc1
+```
 
 ## Live data: air quality in four Indian cities (OpenAQ)
 
