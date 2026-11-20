@@ -10,14 +10,22 @@ What is in this folder
   collector\       ready-made collector folder (for the OTHER laptop)
   collector.zip    the same collector folder as one file, to copy across
 
-The normal single-laptop version is unchanged in D:\Projects\some.
+The normal single-laptop version is the project folder around this one (D:\Projects\some).
+
+server\, collector\ and collector.zip exist only on the server laptop and are never committed to
+git: they contain private keys, collector secrets and the OpenAQ API key. On a fresh clone, create
+them like this (in the project folder):
+    git worktree add "2 laptop version/server" two-laptop
+    copy config\pollution.json "2 laptop version\server\config\"     (your OpenAQ key; make the config folder first)
+    cd "2 laptop version\server"
+    python tools\two_laptop.py package
 
 
 ------------------------------------------------------------------
 ON THIS LAPTOP (server)
 ------------------------------------------------------------------
 1. Connect to the Wi-Fi / hotspot.
-2. Double-click  server\start_server.bat
+2. Double-click  server\start_server.bat   (in D:\Projects\some\2 laptop version)
    Wait for "TIER 2 READY". Leave the window open.
 3. Dashboard: http://localhost:8080
       acme-admin / acme-admin-demo        (simulated servers)
@@ -52,7 +60,7 @@ IF IT DOES NOT CONNECT
   (the line "collectors send to : https://...").
 
 Rebuild the collector package (only needed after "setup_env.py --force" on the server):
-      cd "D:\Projects\2 laptop version\server"
+      cd "D:\Projects\some\2 laptop version\server"
       python tools\two_laptop.py package
 Then copy the new collector.zip to the other laptop again.
 
