@@ -9,6 +9,7 @@ Ctrl+C stops everything. Individual components can be restarted on their own, e.
     python simulator/stream.py
 """
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -38,7 +39,13 @@ def main():
         os.environ["AIOPS_DAY_S"] = str(args.compressed_day)          # read by the SaaS engine and the simulator
     if args.seasonal_min_days:
         os.environ["AIOPS_SEASONAL_MIN_DAYS"] = str(args.seasonal_min_days)
-    if not os.path.exists(os.path.join(ROOT, "config", "registry.json")):
+    reg_path = os.path.join(ROOT, "config", "registry.json")
+    reg = {}
+    if os.path.exists(reg_path):
+        with open(reg_path, encoding="utf-8") as f:
+            reg = json.load(f)
+    if not reg or "mtls" not in reg:
+        # first run, or a config from before mutual TLS: setup keeps existing secrets and adds the rest
         subprocess.run([PY, os.path.join(ROOT, "setup_env.py")], check=True)
     if args.fresh:
         shutil.rmtree(os.path.join(ROOT, "data"), ignore_errors=True)

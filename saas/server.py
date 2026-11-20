@@ -19,7 +19,6 @@ import json
 import os
 import re
 import secrets
-import ssl
 import sys
 import threading
 import time
@@ -28,7 +27,7 @@ import urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.policy import dlp_scan, load_policy, validate_inbound  # noqa: E402
-from common.tlsserver import TLSThreadingHTTPServer  # noqa: E402
+from common.tlsserver import TLSThreadingHTTPServer, peer_fingerprint, server_context  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
 from common.util import CERT_DIR, CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, \
     save_json, sha256_hex, verify_sig  # noqa: E402
@@ -63,6 +62,13 @@ class App:
         c = self.reg["collectors"].get(cid)
         if not c:
             return None, "unknown collector"
+        if c.get("disabled"):
+            return None, "collector disabled"
+        if self.reg.get("mtls"):
+            # the TLS layer already proved the client holds a key certified by our CA; here the
+            # certificate must also be the one enrolled for the collector the request claims to be
+            if peer_fingerprint(h.connection) not in (c.get("cert_fingerprints") or []):
+                return None, "client certificate not enrolled for this collector"
         ok, why = verify_sig(c["secret"], h.command, urllib.parse.urlsplit(h.path).path, body,
                              h.headers.get("X-Timestamp"), h.headers.get("X-Signature"))
         if not ok:
@@ -564,9 +570,10 @@ def main():
     http.server.ThreadingHTTPServer.request_queue_size = 256   # default backlog of 5 refused bursts
     threading.Thread(target=engine_loop, daemon=True).start()
     if APP.reg.get("tls"):
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.load_cert_chain(os.path.join(CERT_DIR, "server.crt"), os.path.join(CERT_DIR, "server.key"))
+        # TLS 1.3 only; with mtls, collectors must present a certificate from our CA (fingerprint
+        # checked per collector in authenticate())
+        ctx = server_context(os.path.join(CERT_DIR, "server.crt"), os.path.join(CERT_DIR, "server.key"),
+                             os.path.join(CERT_DIR, "ca.crt") if APP.reg.get("mtls") else None)
         # handshake per connection thread, never in accept() (bug B1)
         ingest = TLSThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler, ctx)
     else:

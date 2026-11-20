@@ -4,7 +4,12 @@ The TLS handshake must not run inside accept(): the server has a single accept t
 client that connects and never sends a ClientHello would block every other collector (bug B1).
 Here the listening socket stays plain; each accepted connection gets its own thread, and the
 handshake happens there with a timeout.
+
+It also holds the TLS settings both tiers share, so the SaaS, the collector, the tools and the
+tests cannot drift apart: TLS 1.3 only, and (when enabled) mutual TLS, where the SaaS requires a
+client certificate issued by the private CA and pins its SHA-256 fingerprint per collector.
 """
+import hashlib
 import http.server
 import ssl
 
@@ -32,3 +37,43 @@ class TLSThreadingHTTPServer(http.server.ThreadingHTTPServer):
 
 def build_tls_server(addr, handler, ssl_context):
     return TLSThreadingHTTPServer(addr, handler, ssl_context)
+
+
+def server_context(cert_file, key_file, client_ca_file=None):
+    """TLS 1.3 server context; with `client_ca_file`, a client certificate from that CA is required."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    ctx.load_cert_chain(cert_file, key_file)
+    if client_ca_file:
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        ctx.load_verify_locations(cafile=client_ca_file)
+    return ctx
+
+
+def client_context(ca_file, cert_file=None, key_file=None):
+    """TLS 1.3 client context that trusts only the private CA (hostname checked) and, for mutual TLS,
+    presents the collector's own certificate."""
+    ctx = ssl.create_default_context(cafile=ca_file)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    if cert_file:
+        ctx.load_cert_chain(cert_file, key_file)
+    return ctx
+
+
+def fingerprint_der(der):
+    """Lowercase, colon-free SHA-256 of a DER certificate: the value enrolled in `cert_fingerprints`."""
+    return hashlib.sha256(der).hexdigest()
+
+
+def fingerprint_file(pem_path):
+    with open(pem_path, encoding="ascii") as f:
+        return fingerprint_der(ssl.PEM_cert_to_DER_cert(f.read()))
+
+
+def peer_fingerprint(sock):
+    """Fingerprint of the verified client certificate on an accepted connection, or None."""
+    try:
+        der = sock.getpeercert(binary_form=True)
+    except (AttributeError, ValueError, ssl.SSLError):
+        return None
+    return fingerprint_der(der) if der else None

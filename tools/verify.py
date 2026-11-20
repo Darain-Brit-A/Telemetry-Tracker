@@ -19,6 +19,7 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+from common.tlsserver import client_context  # noqa: E402
 from common.util import CONFIG_DIR, DATA_DIR, iso, load_json, now_ms, sign  # noqa: E402
 from tools import stream_adapter  # noqa: E402
 
@@ -358,19 +359,50 @@ def main():
     req = urllib.request.Request("https://127.0.0.1:8443" + path, data=body, method="POST", headers={
         "X-Collector-Id": "col-globex-nyc", "X-Timestamp": ts, "X-Signature": sign(sec, "POST", path, body, ts),
         "Content-Type": "application/json"})
-    ctx = ssl.create_default_context(cafile=os.path.join(CONFIG_DIR, "certs", "ca.crt"))
-    try:
-        urllib.request.urlopen(req, context=ctx, timeout=5)
-        code = 200
-    except urllib.error.HTTPError as e:
-        code = e.code
+    certs = os.path.join(CONFIG_DIR, "certs")
+
+    def tls_ctx(cid=None, max_tls12=False):
+        cc = os.path.join(certs, "collectors", f"{cid}.crt") if cid else None
+        ck = os.path.join(certs, "collectors", f"{cid}.key") if cid else None
+        c = client_context(os.path.join(certs, "ca.crt"), cc, ck)
+        if max_tls12:
+            c.minimum_version = ssl.TLSVersion.TLSv1_2
+            c.maximum_version = ssl.TLSVersion.TLSv1_2
+        return c
+
+    def status(r, c):
+        """HTTP status, or 'TLS rejected' when the connection fails before HTTP."""
+        try:
+            urllib.request.urlopen(r, context=c, timeout=5).read()
+            return 200
+        except urllib.error.HTTPError as e:
+            return e.code
+        except (urllib.error.URLError, OSError, ssl.SSLError):
+            return "TLS rejected"
+
+    code = status(req, tls_ctx("col-globex-nyc"))
+    ctx = tls_ctx("col-acme-dc1")
     bad = urllib.request.Request("https://127.0.0.1:8443" + path, data=body, method="POST", headers={
         "X-Collector-Id": "col-acme-dc1", "X-Timestamp": ts, "X-Signature": "0" * 64})
-    try:
-        urllib.request.urlopen(bad, context=ctx, timeout=5)
-        badcode = 200
-    except urllib.error.HTTPError as e:
-        badcode = e.code
+    badcode = status(bad, ctx)
+
+    # mutual TLS: a correctly signed acme request must still fail without acme's own certificate
+    acme_sec = reg["collectors"]["col-acme-dc1"]["secret"]
+
+    def acme_signed():
+        t2 = str(int(time.time()))
+        return urllib.request.Request("https://127.0.0.1:8443" + path, data=body, method="POST", headers={
+            "X-Collector-Id": "col-acme-dc1", "X-Timestamp": t2, "Content-Type": "application/json",
+            "X-Signature": sign(acme_sec, "POST", path, body, t2)})
+    m_ok = status(acme_signed(), ctx)
+    m_nocert = status(acme_signed(), tls_ctx())
+    m_wrong = status(acme_signed(), tls_ctx("col-globex-nyc"))
+    m_tls12 = status(acme_signed(), tls_ctx("col-acme-dc1", max_tls12=True))
+    record("Mutual TLS 1.3: collector certificate required and pinned to the collector",
+           bool(reg.get("mtls")) and m_ok == 200 and m_nocert == "TLS rejected" and m_wrong == 401
+           and m_tls12 == "TLS rejected",
+           f"signed acme request with acme's certificate -> {m_ok}; without a client certificate -> {m_nocert}; "
+           f"with globex's certificate -> {m_wrong}; TLS 1.2 client -> {m_tls12}")
     # B1 regression: an idle TCP client on the TLS port must not block other collectors
     import socket
     idle = socket.create_connection(("127.0.0.1", 8443))

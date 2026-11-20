@@ -22,7 +22,6 @@ import re
 import socket
 import socketserver
 import sqlite3
-import ssl
 import sys
 import threading
 import time
@@ -34,6 +33,7 @@ import uuid
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.policy import CREDENTIAL_TYPES, dlp_scan, enforce, load_policy, pseudonymize, redact_with_entropy  # noqa: E402
+from common.tlsserver import client_context  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
 from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, sha256_hex, \
     sign  # noqa: E402
@@ -99,7 +99,8 @@ class Collector:
 
         self.ssl_ctx = None
         if cfg.get("ca_file"):
-            self.ssl_ctx = ssl.create_default_context(cafile=cfg["ca_file"])  # pinned private CA, hostname checked
+            # TLS 1.3, pinned private CA, hostname checked; our own client certificate for mutual TLS
+            self.ssl_ctx = client_context(cfg["ca_file"], cfg.get("client_cert"), cfg.get("client_key"))
         self.ingest_base = None
         self.region = None
 

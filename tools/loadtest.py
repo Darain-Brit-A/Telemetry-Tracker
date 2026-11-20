@@ -1,6 +1,6 @@
 """Load test of the SaaS ingest + AIOps path.
 
-Starts an isolated SaaS (own registry, data directory and ports, real TLS and HMAC), then runs N
+Starts an isolated SaaS (own registry, data directory and ports, real mutual TLS 1.3 and HMAC), then runs N
 simulated collectors in parallel. Each one sends one signed payload per second (4 hosts x 9
 metrics, the same shape the real collector produces), for D seconds. Afterwards it checks that
 every payload sent was stored exactly once.
@@ -13,7 +13,6 @@ import os
 import random
 import shutil
 import sqlite3
-import ssl
 import statistics
 import subprocess
 import sys
@@ -26,10 +25,15 @@ import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+from common.tlsserver import client_context, fingerprint_file  # noqa: E402
 from common.util import dumps, iso, now_ms, percentile, sign  # noqa: E402
 from setup_env import DEFAULT_THRESHOLDS, HEALTH_SETTINGS, REGIONS  # noqa: E402
 
 CERTS = os.path.join(ROOT, "config", "certs")
+# every simulated collector presents the demo collector certificate (one keypair, enrolled for all of
+# them); the handshake cost per request is the same as with one certificate each
+CLIENT_CRT = os.path.join(CERTS, "collectors", "col-acme-dc1.crt")
+CLIENT_KEY = os.path.join(CERTS, "collectors", "col-acme-dc1.key")
 DASH_PORT, INGEST_PORT = 18080, 18443
 METRICS = ["cpu_pct", "mem_pct", "disk_pct", "bw_in_mbps", "bw_out_mbps", "latency_ms", "packet_loss_pct",
            "reachable", "svc_up"]
@@ -37,14 +41,16 @@ METRICS = ["cpu_pct", "mem_pct", "disk_pct", "bw_in_mbps", "bw_out_mbps", "laten
 
 def make_registry(n):
     th = {k: list(v) for k, v in DEFAULT_THRESHOLDS.items()}
-    reg = {"regions": REGIONS, "tls": True, "dashboard_port": DASH_PORT, "ingest_port": INGEST_PORT, "users": {},
+    fp = fingerprint_file(CLIENT_CRT)
+    reg = {"regions": REGIONS, "tls": True, "mtls": True, "dashboard_port": DASH_PORT, "ingest_port": INGEST_PORT, "users": {},
            "tenants": {}, "collectors": {}}
     for t, region in (("load-eu", "eu-west"), ("load-us", "us-east")):
         reg["tenants"][t] = {"name": t, "region": region, "thresholds": th, "health": dict(HEALTH_SETTINGS),
                              "dependencies": {"web": ["api"], "api": ["db"]}}
     for i in range(n):
         reg["collectors"][f"lc-{i:04d}"] = {"tenant_id": "load-eu" if i % 2 == 0 else "load-us",
-                                            "secret": uuid.uuid4().hex, "site": f"site-{i}"}
+                                            "secret": uuid.uuid4().hex, "site": f"site-{i}",
+                                            "cert_fingerprints": [fp]}
     return reg
 
 
@@ -107,7 +113,7 @@ def run_level(n, seconds):
     srv = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "saas", "server.py")], env=env, cwd=ROOT,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
-        ctx = ssl.create_default_context(cafile=os.path.join(CERTS, "ca.crt"))
+        ctx = client_context(os.path.join(CERTS, "ca.crt"), CLIENT_CRT, CLIENT_KEY)
         for _ in range(50):
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{DASH_PORT}/index.html", timeout=1)
