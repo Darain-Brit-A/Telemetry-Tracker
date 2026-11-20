@@ -31,7 +31,7 @@ from common.tlsserver import TLSThreadingHTTPServer, peer_fingerprint, server_co
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
 from common.util import CERT_DIR, CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, \
     save_json, sha256_hex, verify_sig  # noqa: E402
-from saas.aiops import ACTIONS, STATES, Engine  # noqa: E402
+from saas.aiops import ACTIONS, STATES, THRESHOLD_MODES, Engine  # noqa: E402
 from saas.store import Stores  # noqa: E402
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -288,6 +288,8 @@ class App:
                 "server_time": iso(), "newest_event_ms": newest, "collectors": cols, "sources": sources,
                 "incidents": incidents, "alerts": alerts, "history": history, "slo": eng.slo(t),
                 "counters": counters, "audit": audit, "thresholds": T["thresholds"], "health_settings": T["health"],
+                "threshold_modes": {k: (T.get("threshold_modes") or {}).get(k, "manual") for k in T["thresholds"]},
+                "learned_limits": eng.learned_limits(t),
                 "states": STATES, "policy_version": self.policy["policy_version"],
             }
 
@@ -343,11 +345,15 @@ class App:
         for k, v in (data.get("thresholds") or {}).items():
             if k in T["thresholds"] and isinstance(v, list) and len(v) == 3 and v == sorted(v):
                 T["thresholds"][k] = [float(x) for x in v]
+        for k, v in (data.get("threshold_modes") or {}).items():
+            if k in T["thresholds"] and v in THRESHOLD_MODES:
+                T.setdefault("threshold_modes", {})[k] = v
         for k, v in (data.get("health") or {}).items():
             if k in T["health"]:
                 T["health"][k] = max(5, int(v))
         save_json(REG_PATH, self.reg)
         self.engine.audit(t, user["username"], "config_change", json.dumps({"thresholds": T["thresholds"],
+                                                                            "threshold_modes": T.get("threshold_modes", {}),
                                                                             "health": T["health"]}))
         return 200, {"ok": True}
 

@@ -40,6 +40,11 @@ RESOURCE = {"cpu_pct", "mem_pct"}
 MIN_BASELINE = 20
 Z_OPEN, Z_LEARN, PERSIST = 4.0, 2.5, 3
 CLEAR = 5                       # normal windows needed before an anomaly is considered over
+# Learned (ML) health limits: Excellent / Good / Fair boundaries at baseline + k * robust spread, per source.
+# 4 is the anomaly detector's own threshold and 8 the point where it rates an anomaly "high", so the
+# health grade and the anomaly alerts agree. The manual Poor value stays as a hard safety limit.
+LEARNED_Z = (2.0, Z_OPEN, 8.0)
+THRESHOLD_MODES = ("manual", "learned")
 CORRELATION_WINDOW_MS = 180_000
 BENCHMARK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmark.json")
 
@@ -136,9 +141,10 @@ def deviation_sentence(dev):
 
 class Series:
     __slots__ = ("hist", "recent", "last_ts", "consec", "clear", "anomalous", "run_start", "onset", "z", "peak_z",
-                 "peak_v", "thr_consec", "resid", "profile", "season_cache")
+                 "peak_v", "thr_consec", "resid", "profile", "season_cache", "learned")
 
     def __init__(self):
+        self.learned = None          # (excellent, good, fair) limits from this series' own baseline
         self.hist = collections.deque(maxlen=180)
         self.recent = collections.deque(maxlen=60)
         self.last_ts = 0
@@ -289,11 +295,6 @@ class Engine:
         s.recent.append((ts, value))
         meta = METRIC_META.get(name)
         thr = self.T(t)["thresholds"].get(name)
-        level = level_of(value, thr) if thr else 0
-        s.thr_consec = s.thr_consec + 1 if level >= 2 else 0
-        # a single 1-second reading over a threshold is routine noise (benchmark: it caused most false
-        # alarms), so Poor needs 2 consecutive windows and Fair needs PERSIST - both well inside 15 s
-        thr_active = (level == 3 and s.thr_consec >= 2) or (level >= 2 and s.thr_consec >= PERSIST)
 
         z = med = mad = expected = None
         kind = "recent"
@@ -314,6 +315,14 @@ class Engine:
         if meta:
             seasonal_learn(s, slot, day, value)
         s.z = z
+        if z is not None:
+            sigma = max(1.4826 * mad, meta["floor"])
+            s.learned = tuple(round(med + k * sigma, 2) for k in LEARNED_Z)
+        level, alert_level, thr_shown, thr_mode = self.threshold_level(t, name, s, value)
+        s.thr_consec = s.thr_consec + 1 if alert_level >= 2 else 0
+        # a single 1-second reading over a threshold is routine noise (benchmark: it caused most false
+        # alarms), so Poor needs 2 consecutive windows and Fair needs PERSIST - both well inside 15 s
+        thr_active = (alert_level == 3 and s.thr_consec >= 2) or (alert_level >= 2 and s.thr_consec >= PERSIST)
         if z is not None and z >= Z_OPEN:
             if s.consec == 0:
                 s.run_start = ts
@@ -350,10 +359,10 @@ class Engine:
                       "spread": None if mad is None else round(1.4826 * mad, 2),
                       "z": None if z is None else round(z, 1), "peak_z": round(s.peak_z, 1),
                       "anomaly": s.anomalous, "threshold": thr_active, "level": STATES[level],
-                      "threshold_values": thr, "trend_per_min": slope,
+                      "threshold_values": thr_shown, "threshold_mode": thr_mode, "trend_per_min": slope,
                       "onset": iso(s.onset or ts), "baseline_kind": kind,
                       "expected_for_hour": None if expected is None else round(expected, 2)}
-            if thr_active and level == 3:
+            if thr_active and alert_level == 3:
                 sev = "critical"
             elif thr_active or (z or 0) >= 8:
                 sev = "high"
@@ -373,6 +382,35 @@ class Engine:
             self.open_alert(t, akey, sid, name, why, sev, title, detail, first)
         else:
             self.resolve_alert(t, akey, "metric back within baseline/thresholds")
+
+    def threshold_level(self, t, name, s, value):
+        """Health level and alerting level of `value` for one series.
+
+        Returns (health_level, alert_level, limits_shown, mode). In manual mode both levels come from
+        the tenant's fixed limits. In learned mode the health level comes from the series' own
+        baseline (s.learned), and only the manual Poor value can raise a threshold alert - deviations
+        from the baseline are already alerted by the anomaly detector, with its persistence filter.
+        Until a baseline exists, learned mode falls back to the manual limits.
+        """
+        T = self.T(t)
+        thr = T["thresholds"].get(name)
+        if not thr:
+            return 0, 0, None, None
+        manual = level_of(value, thr)
+        if (T.get("threshold_modes") or {}).get(name) != "learned":
+            return manual, manual, thr, "manual"
+        if s is None or s.learned is None:
+            return manual, manual, thr, "manual (learning baseline)"
+        safety = 3 if manual == 3 else 0
+        return max(level_of(value, s.learned), safety), safety, list(s.learned) + [thr[2]], "learned"
+
+    def learned_limits(self, t):
+        """Current learned limits per metric and source, for the settings page."""
+        out = collections.defaultdict(list)
+        for (tt, sid, name), s in self.series.items():
+            if tt == t and s.learned is not None and name in self.T(t)["thresholds"]:
+                out[name].append({"source_id": sid, "limits": list(s.learned)})
+        return out
 
     def _slope(self, s):
         pts = list(s.recent)[-24:]
@@ -583,17 +621,18 @@ class Engine:
             sid = src["source_id"]
             state, reasons = 0, []
             newest = newest_by_source.get(sid, 0)
-            for name, thr in T["thresholds"].items():
+            for name in T["thresholds"]:
                 lv = self.latest.get((t, sid, name))
                 if not lv:
                     continue
                 newest = max(newest, lv[0])
-                lev = level_of(lv[1], thr)
+                lev, _, shown, mode = self.threshold_level(t, name, self.series.get((t, sid, name)), lv[1])
                 if lev:
                     state = max(state, lev)
+                    what = (f"learned limits {shown[:3]}, safety limit {shown[3]}" if mode == "learned"
+                            else f"thresholds {shown}")
                     reasons.append(f"{METRIC_META.get(name, {}).get('label', name)} {lv[1]:.1f}"
-                                   f"{METRIC_META.get(name, {}).get('unit', '')} -> {STATES[lev]} "
-                                   f"(thresholds {thr})")
+                                   f"{METRIC_META.get(name, {}).get('unit', '')} -> {STATES[lev]} ({what})")
             for name, label in (("reachable", "unreachable from collector"), ("svc_up", "service check failing")):
                 lv = self.latest.get((t, sid, name))
                 if lv:

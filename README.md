@@ -70,6 +70,7 @@ before it was kept:
 | Entropy-assisted secret detection (collector) | Catches bare random tokens the regex patterns miss; add-only, never decides what leaves | 0 false positives on 14,000 ordinary IDs and lines; 95.5% of 10,000 secrets caught; 23.5 µs per line |
 | Deviation share (SaaS) | Shows each signal's share of an incident's total deviation, root and symptoms drawn separately | Shares always add up to 100%; the root group is always the ranked root |
 | Seasonal baseline (SaaS) | Compares each value with what is normal for that hour of the day once 3 days of history exist | Daily-peak false alarms in 20/20 trials without it, 1/20 with it; night spikes still caught 20/20 |
+| Learned health limits (SaaS, optional per metric) | **Thresholds & audit → Limits: Learned (ML)**. Each source's Excellent / Good / Fair limits come from its own baseline (+2σ / +4σ / +8σ, seasonal when available) instead of one fixed number for all; the manual Fair value stays as a hard safety limit, and only it raises threshold alerts (deviations are alerted by the anomaly detector) | Unit-tested: a database always at 88% CPU is Fair with a standing alert under manual limits, Excellent under learned; 95% still Poor and alerted. Default stays Manual, so the benchmark is unchanged |
 
 Seasonal demo with a 10-minute day (the evening peak stops alerting after 3 compressed days; then use the
 collector console's **Night spike** button):

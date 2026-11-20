@@ -290,8 +290,9 @@ function renderSlo() {
 function renderSettings() {
   const admin = D.user.role === 'admin';
   if (!thrDirty) {
-    $('thr').innerHTML = `<div class="thr small mut"><span>Metric</span><span>Excellent &lt;</span><span>Good &lt;</span><span>Fair &lt;</span></div>` +
-      Object.entries(D.thresholds).map(([k, v]) => `<div class="thr"><span>${k}</span>${v.map((x, i) => `<input data-m="${k}" data-i="${i}" value="${x}" ${admin ? '' : 'disabled'}>`).join('')}</div>`).join('') +
+    $('thr').innerHTML = `<div class="thr small mut"><span>Metric</span><span>Limits</span><span>Excellent &lt;</span><span>Good &lt;</span><span>Fair &lt;</span></div>` +
+      Object.entries(D.thresholds).map(([k, v]) => thrRow(k, v, admin)).join('') +
+      `<div class="small mut" style="margin-top:8px"><b>Learned (ML)</b>: each source gets its own limits from its baseline (median and robust spread, per hour of day once seasonal history exists): Excellent below baseline + 2σ, Good below + 4σ, Fair below + 8σ. The Fair &lt; value stays as a <b>safety limit</b>: at or above it the source is Poor and alerts, whatever its baseline. Until a baseline exists (about 20 s), the manual limits apply.</div>` +
       `<div class="small mut" style="margin-top:8px">Stale after ${D.health_settings.stale_after_s}s → Fair; no data after ${D.health_settings.no_data_after_s}s → Poor; collector offline after ${D.health_settings.collector_offline_after_s}s.</div>`;
   }
   $('savethr').disabled = !admin;
@@ -299,10 +300,22 @@ function renderSettings() {
   $('resid').innerHTML = `<p style="margin:0">All metadata for <b>${esc(D.tenant.name)}</b> is stored in region <b>${D.tenant.region}</b> (${esc(D.tenant.region_name)}). Collectors discover this endpoint at startup; a payload sent to another region is refused with 421 Misdirected and never stored.</p>`;
   $('audit').innerHTML = `<table>${D.audit.map(a => `<tr><td class="mono">${new Date(a.ts_ms).toISOString().slice(0, 19)}Z</td><td>${esc(a.actor)}</td><td>${esc(a.action)}</td><td class="small mut">${esc(a.detail)}</td></tr>`).join('')}</table>`;
 }
+function thrRow(k, v, admin) {
+  const learned = (D.threshold_modes || {})[k] === 'learned';
+  const dis = i => (!admin || (learned && i < 2)) ? 'disabled' : '';
+  const name = sid => { const s = D.sources.find(x => x.source_id === sid); return s ? `${s.service}/${s.role}` : sid; };
+  const now = ((D.learned_limits || {})[k] || []).slice(0, 4).map(x => `${esc(name(x.source_id))} ${x.limits.join('/')}`).join(' · ');
+  const more = Math.max(0, ((D.learned_limits || {})[k] || []).length - 4);
+  return `<div class="thr"><span>${k}</span>` +
+    `<select data-mode="${k}" ${admin ? '' : 'disabled'}><option value="manual" ${learned ? '' : 'selected'}>Manual</option><option value="learned" ${learned ? 'selected' : ''}>Learned (ML)</option></select>` +
+    v.map((x, i) => `<input data-m="${k}" data-i="${i}" value="${x}" ${dis(i)} title="${learned && i === 2 ? 'safety limit: Poor at or above, whatever the baseline' : ''}">`).join('') + `</div>` +
+    (learned ? `<div class="thr-learned small mut">${now ? `learned now: ${now}${more ? ` · +${more} more` : ''}` : 'learning baselines…'} · safety limit ${v[2]}</div>` : '');
+}
 async function saveThr() {
-  const t = {};
+  const t = {}, modes = {};
   document.querySelectorAll('#thr input').forEach(i => { (t[i.dataset.m] = t[i.dataset.m] || [])[+i.dataset.i] = +i.value; });
-  const r = await api('/api/config', {method: 'POST', body: JSON.stringify({thresholds: t})});
+  document.querySelectorAll('#thr select[data-mode]').forEach(s => { modes[s.dataset.mode] = s.value; });
+  const r = await api('/api/config', {method: 'POST', body: JSON.stringify({thresholds: t, threshold_modes: modes})});
   $('thrmsg').className = 'small ' + (r.__status === 200 ? 'okc' : 'bad');
   $('thrmsg').textContent = r.__status === 200 ? 'Saved (audited)' : r.error; thrDirty = false; load();
 }
@@ -327,6 +340,12 @@ $('loginform').addEventListener('submit', doLogin);
 $('tzmode').addEventListener('change', () => render());
 $('pkind').addEventListener('change', () => loadPayloads());
 document.addEventListener('input', e => { if (e.target.closest('#thr')) thrDirty = true; });
+// switching a metric's mode shows at once which inputs still apply (the save button stores it)
+document.addEventListener('change', e => {
+  const m = e.target.dataset && e.target.dataset.mode;
+  if (!m) return;
+  document.querySelectorAll(`#thr input[data-m="${m}"]`).forEach(i => { if (+i.dataset.i < 2) i.disabled = e.target.value === 'learned'; });
+});
 
 setInterval(() => { if (!document.hidden && !$('app').classList.contains('hidden')) load(); }, 1000);
 fetch('/api/me').then(r => r.ok ? load() : showLogin());

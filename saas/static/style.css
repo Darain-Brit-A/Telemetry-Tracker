@@ -897,8 +897,11 @@ canvas { width: 100%; height: 50px; display: block; }
 .charts canvas { height: 124px; margin-top: 6px; border-radius: 10px; background: var(--color-surface-subtle); border: 1px solid var(--border-subtle); }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
-.thr { display: grid; grid-template-columns: 150px repeat(3, 84px); gap: 8px; align-items: center; margin-bottom: 8px; }
-.thr input { width: 84px; }
+.thr { display: grid; grid-template-columns: 130px 128px repeat(3, 72px); gap: 8px; align-items: center; margin-bottom: 8px; }
+.thr select { width: 128px; }
+.thr-learned { margin: -4px 0 10px 138px; line-height: 1.4; }
+@media (max-width: 640px) { .thr { grid-template-columns: 1fr 1fr; } .thr span { grid-column: 1 / -1; } .thr-learned { margin-left: 0; } }
+.thr input { width: 72px; }
 
 .tag {
   display: inline-block;
