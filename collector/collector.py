@@ -34,7 +34,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.policy import CREDENTIAL_TYPES, dlp_scan, enforce, load_policy, pseudonymize, redact_with_entropy  # noqa: E402
 from common.tlsserver import client_context  # noqa: E402
-from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
+from common.web import SECURITY_HEADERS, host_ok, origin_ok, token_ok  # noqa: E402
 from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, sha256_hex, \
     sign  # noqa: E402
 
@@ -724,6 +724,9 @@ def make_handler(col):
             if not self._guard(write=True):
                 return
             if self.path == "/ingest":
+                # only the authorised local producer may feed events (shared token, constant-time check)
+                if not token_ok(self.headers, col.cfg.get("ingest_token")):
+                    return self._send(401, {"error": "missing or wrong ingest token"})
                 text = body.decode("utf-8", "replace").strip()
                 try:
                     if text.startswith("["):

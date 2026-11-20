@@ -5,7 +5,9 @@
 * Origin check - state-changing requests must come from our own page (or a non-browser client).
 * Headers      - strict Content-Security-Policy (no inline script), no framing, no sniffing,
                  no referrer leakage.
+* Local ingest - a collector's /ingest takes events only with its bearer token (token_ok).
 """
+import hmac
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -31,3 +33,35 @@ def origin_ok(headers, port):
     if origin is None:          # curl, scripts, same-origin GETs
         return True
     return origin.lower() in {f"http://{h}" for h in allowed_hosts(port)}
+
+
+def ingest_headers(token=None):
+    """Headers for a local producer posting to a collector's /ingest (bearer token when configured)."""
+    h = {"Content-Type": "application/json"}
+    if token:
+        h["Authorization"] = "Bearer " + token
+    return h
+
+
+def token_ok(headers, token):
+    """Constant-time check of `Authorization: Bearer <token>`; no token configured means open."""
+    if not token:
+        return True
+    got = headers.get("Authorization") or ""
+    return got.startswith("Bearer ") and hmac.compare_digest(got[7:].encode(), token.encode())
+
+
+def ingest_headers(token=None):
+    """Headers for a local producer posting to a collector's /ingest (bearer token when configured)."""
+    h = {"Content-Type": "application/json"}
+    if token:
+        h["Authorization"] = "Bearer " + token
+    return h
+
+
+def token_ok(headers, token):
+    """Constant-time check of `Authorization: Bearer <token>`; no token configured means open."""
+    if not token:
+        return True
+    got = headers.get("Authorization") or ""
+    return got.startswith("Bearer ") and hmac.compare_digest(got[7:].encode(), token.encode())

@@ -44,8 +44,9 @@ def main():
     if os.path.exists(reg_path):
         with open(reg_path, encoding="utf-8") as f:
             reg = json.load(f)
-    if not reg or "mtls" not in reg:
-        # first run, or a config from before mutual TLS: setup keeps existing secrets and adds the rest
+    if reg.get("setup_version", 0) < 2:
+        # first run, or a config from an older setup (before mutual TLS / ingest tokens):
+        # setup keeps existing secrets and adds what is missing
         subprocess.run([PY, os.path.join(ROOT, "setup_env.py")], check=True)
     if args.fresh:
         shutil.rmtree(os.path.join(ROOT, "data"), ignore_errors=True)

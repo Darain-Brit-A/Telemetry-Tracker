@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.util import CONFIG_DIR, _zone, iso, load_json, now_ms  # noqa: E402
+from common.web import ingest_headers  # noqa: E402
 
 TS_KEYS = ["ts", "timestamp", "time", "@timestamp", "at", "event_time", "eventTime", "event_time_utc", "datetime",
            "date"]
@@ -198,7 +199,8 @@ def read_records(path):
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
-def run(records, ingest_url, mapping=None, rebase=True, speed=1.0, dry_run=False, default_tz="UTC", out=print):
+def run(records, ingest_url, mapping=None, rebase=True, speed=1.0, dry_run=False, default_tz="UTC", out=print,
+        token=None):
     mapped = []
     for rec in records:
         if isinstance(rec, dict):
@@ -218,17 +220,17 @@ def run(records, ingest_url, mapping=None, rebase=True, speed=1.0, dry_run=False
             if shift:
                 e["ts"] = iso(parse_ts(e["ts"]) + shift + int((due - (ts - t0) / 1000) * 1000))
         if batch and due - batch_due > 0.2:
-            _send(ingest_url, batch, start, batch_due, dry_run, stats, out)
+            _send(ingest_url, batch, start, batch_due, dry_run, stats, out, token)
             batch = []
         if not batch:
             batch_due = due
         batch.extend(evs)
     if batch:
-        _send(ingest_url, batch, start, batch_due, dry_run, stats, out)
+        _send(ingest_url, batch, start, batch_due, dry_run, stats, out, token)
     return stats
 
 
-def _send(url, batch, start, due, dry_run, stats, out):
+def _send(url, batch, start, due, dry_run, stats, out, token=None):
     wait = start + due - time.time()
     if wait > 0 and not dry_run:
         time.sleep(wait)
@@ -236,8 +238,7 @@ def _send(url, batch, start, due, dry_run, stats, out):
     if dry_run:
         out(json.dumps(batch))
         return
-    req = urllib.request.Request(url, data=json.dumps(batch).encode(), method="POST",
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(url, data=json.dumps(batch).encode(), method="POST", headers=ingest_headers(token))
     urllib.request.urlopen(req, timeout=5).read()
 
 
@@ -257,7 +258,7 @@ def main():
     url = f"http://127.0.0.1:{cfg['ui_port']}/ingest" if cfg else ""
     mapping = load_json(args.mapping) if args.mapping else None
     stats = run(read_records(args.input), url, mapping, rebase=not args.keep_ts, speed=args.speed,
-                dry_run=args.dry_run, default_tz=args.tz)
+                dry_run=args.dry_run, default_tz=args.tz, token=(cfg or {}).get("ingest_token"))
     print(json.dumps(stats), file=sys.stderr)
 
 

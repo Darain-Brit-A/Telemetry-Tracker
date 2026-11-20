@@ -2,7 +2,7 @@
 
 * creates a private CA and a TLS certificate for the SaaS ingest endpoint (openssl)
 * issues each collector its own client certificate (mutual TLS) and enrols its SHA-256 fingerprint
-* enrols collectors (per-collector HMAC secret, bound to one tenant)
+* enrols collectors (per-collector HMAC secret, bound to one tenant, and a token for the local /ingest)
 * writes the SaaS registry (tenants, residency regions, users) and collector configs
 
 Re-running keeps existing secrets unless --force is given.
@@ -63,6 +63,7 @@ DEFAULT_THRESHOLDS = {
 }
 HEALTH_SETTINGS = {"stale_after_s": 10, "no_data_after_s": 30, "collector_offline_after_s": 30}
 
+SETUP_VERSION = 2          # bump when setup adds something existing configs need (run_all re-runs setup)
 SAAS_DASH_PORT = 8080
 SAAS_INGEST_PORT = 8443
 SIM_PORT = 9000
@@ -151,7 +152,7 @@ def main():
     old = {} if args.force else (load_json(reg_path, {}) or {})
     old_secrets = {cid: c["secret"] for cid, c in old.get("collectors", {}).items()}
 
-    registry = {"regions": REGIONS, "tenants": {}, "collectors": {}, "users": {}, "tls": tls, "mtls": mtls,
+    registry = {"regions": REGIONS, "tenants": {}, "collectors": {}, "users": {}, "tls": tls, "mtls": mtls, "setup_version": SETUP_VERSION,
                 "dashboard_port": SAAS_DASH_PORT, "ingest_port": SAAS_INGEST_PORT}
     sim = {"port": SIM_PORT, "collectors": {}}
 
@@ -167,10 +168,13 @@ def main():
                 registry["collectors"][cid]["cert_fingerprints"] = [fingerprint_file(crt)]
             col_cfg_path = os.path.join(CONFIG_DIR, "collectors", f"{cid}.json")
             old_col = (load_json(col_cfg_path, {}) or {}) if not args.force else {}
+            # shared with the authorised local producer (here: the simulator); sent as a bearer token
+            token = old_col.get("ingest_token") or secrets.token_urlsafe(32)
             save_json(col_cfg_path, {
                 "collector_id": cid,
                 "secret": secret,
                 "pseudonym_salt": old_col.get("pseudonym_salt") or secrets.token_hex(16),
+                "ingest_token": token,
                 "site": c["site"],
                 "tz": c["tz"],
                 "saas_url": ingest_base,          # global entry point; region discovered at startup
@@ -185,7 +189,7 @@ def main():
                 "hosts": {h: {"role": r, "service": s} for h, r, s in c["hosts"]},
                 "auth_burst_threshold": 5,
             })
-            sim["collectors"][cid] = {"ingest": f"http://127.0.0.1:{c['ui_port']}/ingest",
+            sim["collectors"][cid] = {"ingest": f"http://127.0.0.1:{c['ui_port']}/ingest", "ingest_token": token,
                                       "syslog_port": c["syslog_port"], "site": c["site"], "tz": c["tz"],
                                       "tenant": tid, "hosts": c["hosts"]}
 

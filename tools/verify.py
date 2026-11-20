@@ -174,7 +174,8 @@ def main():
                      "link_up": "true", "note": "organizer-format record"})
     cfg = load_json(os.path.join(CONFIG_DIR, "collectors", "col-globex-nyc.json"))
     feeder = threading.Thread(target=stream_adapter.run, daemon=True, kwargs={
-        "records": recs, "ingest_url": f"http://127.0.0.1:{cfg['ui_port']}/ingest", "rebase": True})
+        "records": recs, "ingest_url": f"http://127.0.0.1:{cfg['ui_port']}/ingest", "rebase": True,
+        "token": cfg.get("ingest_token")})
     feeder.start()
     fault_at = t_start + 50_000
 

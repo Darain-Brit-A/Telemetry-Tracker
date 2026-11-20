@@ -27,6 +27,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.util import CONFIG_DIR, iso, load_json, now_ms, parse_iso  # noqa: E402
+from common.web import ingest_headers  # noqa: E402
 
 PROFILES = {  # role -> baseline
     "web": dict(cpu=32, mem=48, disk=41, bw=120, lat=22),
@@ -198,7 +199,7 @@ class Stream:
                 continue
             try:
                 req = urllib.request.Request(c["ingest"], data=json.dumps(batch).encode(), method="POST",
-                                             headers={"Content-Type": "application/json"})
+                                             headers=ingest_headers(c.get("ingest_token")))
                 urllib.request.urlopen(req, timeout=2).read()
             except Exception:
                 pass   # collector down: the source simply loses its sink, like a real device would
@@ -335,7 +336,7 @@ def replay(cfg, path, keep_ts):
         if not keep_ts:
             ev["ts"] = iso()
         req = urllib.request.Request(cfg["collectors"][cid]["ingest"], data=json.dumps([ev]).encode(), method="POST",
-                                     headers={"Content-Type": "application/json"})
+                                     headers=ingest_headers(cfg["collectors"][cid].get("ingest_token")))
         try:
             urllib.request.urlopen(req, timeout=2).read()
         except Exception as e:
