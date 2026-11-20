@@ -60,6 +60,24 @@ guess, and `--speed 10` to replay faster. Unmapped fields still reach the collec
 CI (`.github/workflows/ci.yml`) runs the unit tests on Linux and Windows and fails the build if
 benchmark precision or recall drops below 85%.
 
+## Statistical (ML) features
+
+Three statistical methods described in [AIOPS_ML_FEATURES_MASTER.md](AIOPS_ML_FEATURES_MASTER.md), each measured
+before it was kept:
+
+| Feature | What it does | Measured |
+|---|---|---|
+| Entropy-assisted secret detection (collector) | Catches bare random tokens the regex patterns miss; add-only, never decides what leaves | 0 false positives on 14,000 ordinary IDs and lines; 95.5% of 10,000 secrets caught; 23.5 µs per line |
+| Deviation share (SaaS) | Shows each signal's share of an incident's total deviation, root and symptoms drawn separately | Shares always add up to 100%; the root group is always the ranked root |
+| Seasonal baseline (SaaS) | Compares each value with what is normal for that hour of the day once 3 days of history exist | Daily-peak false alarms in 20/20 trials without it, 1/20 with it; night spikes still caught 20/20 |
+
+Seasonal demo with a 10-minute day (the evening peak stops alerting after 3 compressed days; then use the
+collector console's **Night spike** button):
+
+```powershell
+python run_all.py --fresh --compressed-day 600
+```
+
 ## What runs
 
 | Component | Path | Role |

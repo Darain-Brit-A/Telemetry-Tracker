@@ -2,9 +2,9 @@
 
 > **Project:** End-to-end, secure AIOps observability (CICADA 2026, TechForcz x Atria Institute of Technology)
 > **Repository:** `Telemetry-Tracker`
-> **Status:** proposal, **not implemented yet**. Nothing below is in the code until its checklist is done.
-> **Revision 2:** revised from the first draft after testing its rules against real data. What changed and
-> why is listed at the end.
+> **Status:** **implemented** (commits `5922f86` feature 2, `2d49600` feature 1, `9ce6be3` feature 3), with the
+> measured results below. Revision 2 of the design was written after testing the first draft against real
+> data; a few details changed again while building and are marked "As built".
 
 ## Summary
 
@@ -18,6 +18,23 @@ required to prove itself with measurements before it ships.
 | 3 | Seasonal baseline | SaaS (`saas/aiops.py`, `on_point()`) | Hour-of-day profile, existing median/MAD detector run on the residual | A daily peak is not an anomaly; a quiet-hours jump is | Phase 2 and 3: baselines beyond thresholds |
 
 All three use only the Python standard library (`math`, `re`, `collections`, `statistics`).
+
+## Measured results
+
+| Feature | Acceptance target | Measured | Met? |
+|---|---|---|---|
+| 1. Secret detection | False positives below 1% overall, below 2% per ID type | **0 of 14,000** (trace IDs, SHAs, request IDs, pod names, UUIDs, IDs after common words, sentences) | yes |
+| 1. Secret detection | Detection 90% or more | **95.5%** of 10,000 secrets (93.0-100% per type) | yes |
+| 1. Secret detection | Under 50 µs per log line | **23.5 µs** (regex + entropy) | yes |
+| 2. Deviation share | Shares add up to 100%; root group is the ranked root; wording never calls a symptom the cause | all three checked by unit tests on the cascade scenario | yes |
+| 3. Seasonal baseline | No false alarms on the daily peak | **1 of 20** trials had one (without the feature: **20 of 20**) | not fully |
+| 3. Seasonal baseline | Night spike detected 90% or more | **20 of 20** detected, 20 of 20 explained against "expected for this hour" | yes |
+| 3. Seasonal baseline | Existing scenarios unchanged | main benchmark (seed 7) identical: precision 94.1%, recall 94%, 0.64 false alarms per host-hour | yes |
+| 3. Seasonal baseline | Before enough history, identical to today | checked by a unit test | yes |
+| All | No throughput loss | load test, 100 collectors: about 90.5 payloads/s before and after, 0 errors, 0 loss; engine cost +5 µs per point | yes |
+
+Reproduce: `python -m unittest discover -s tests -t tests` (features 1-3), `python tools/benchmark.py --seasonal
+--trials 20 --seed 1` (feature 3), `python tools/benchmark.py --trials 60 --seed 7` (regression check).
 
 **On wording:** these are statistical methods, not trained machine-learning models. Present them that way.
 Judges respect "a measured statistical rule we can explain" more than "ML" that turns out to be a
@@ -77,10 +94,14 @@ Score each candidate token on three things, and redact only when all agree:
 2. **Shape.** Length 20 or more; a mix of upper case, lower case and digits (base62/base64), or hex only
    when it appears next to a hint word (see 3).
 3. **Context.** Known identifier shapes are skipped: UUIDs, 32/40/64-character hex IDs (trace IDs, SHAs,
-   digests), our own `src-` / `col-` / `fp-` / `tpl-` prefixes, `word-word-hash` pod and container
-   names, and tokens inside a field named like an ID (`trace_id`, `request_id`, `commit`, `pod`). A hex
-   token is only treated as a secret when a hint word (`key`, `secret`, `token`, `auth`, `credential`,
-   `using`, `with`) appears within the three tokens before it.
+   digests), our own `src-` / `col-` / `fp-` / `tpl-` prefixes and `word-word-hash` pod and container
+   names. A hex token is only treated as a secret right after a hint word.
+
+   **As built:** hints are split in two. *Strong* hints (`key`, `apikey`, `secret`, `token`, `auth`,
+   `credential`) count when they are among the two words before the token, and override the hex-ID
+   shapes, so `api key <32-hex>` is still caught. *Weak* hints (`using`, `with`) count only directly before
+   a hex token that is **not** an ID length. Measured reason: with "using"/"with" as ordinary hints,
+   `processed request with trace <32-hex>` was flagged 93% of the time.
 
 What happens on a hit:
 
@@ -123,9 +144,9 @@ label, identifier or free text to suggest a mapping. It never sends anything.
 
 ### Acceptance criteria
 
-Two fixture files in `tests/fixtures/`:
+Two corpora, generated deterministically (fixed seed) in `tests/test_secret_entropy.py`:
 - **IDs corpus** (must not be flagged): 2,000 each of trace IDs, SHAs, request IDs, pod names, UUIDs,
-  plus normal log sentences;
+  IDs after common words (`with`, `using`, `for`, `from`), plus normal log sentences;
 - **Secrets corpus** (must be flagged): random base62/base64 keys of 20-64 characters, GitHub- and
   Slack-style tokens, AWS-style secret keys, and hex keys preceded by a hint word.
 
@@ -183,10 +204,11 @@ being given an arbitrary weight.
 | Root | orders-db | latency | 6.6 | 6.7% |
 | Root | orders-db | memory | 4.2 | 4.2% |
 | Symptom | checkout-web, host A | latency | 25.2 | 25.5% |
-| Symptom | checkout-web, host B | latency | 24.8 | 25.1% |
+| Symptom | checkout-web, host B | latency | 24.8 | 25.0% |
 | Symptom | checkout-api | latency | 17.2 | 17.4% |
 
-Composite score $S = 45.3$. The reasoning line reads:
+Composite score $S = 45.3$. **As built:** shares use largest-remainder rounding so they add up to exactly
+100.0% (plain rounding gave 100.1% here, which is why host B shows 25.0%). The reasoning line reads:
 
 > "Symptoms carry 68% of the total deviation (latency on checkout-web and checkout-api). The root is
 > orders-db (32%, led by CPU at z = 21.0) because it deviated first and the slowed services depend on it."
@@ -237,9 +259,12 @@ The first draft proposed $S_t = 0.15\,x_t + 0.85\,S_{t-1}$. Two problems:
 
 Learn what is normal *for this hour of the day*, then run the existing detector on the difference:
 
-1. For each series, keep a 24-slot profile: the median value seen in each hour of the day (UTC, or the
-   source's local hour from its timezone), updated only from windows that were not anomalous.
-2. Once a slot has enough history (at least 3 days' worth of samples for that hour), compute the
+1. For each series, keep a 24-slot profile. **As built:** each slot holds one median per day for the last
+   7 days, and the expected value is the median of the *previous* days' medians. Today's values (which may
+   be the fault) never shift today's expectation, and one bad day cannot poison the profile. Every value
+   feeds the profile, not only "normal" ones: otherwise a daily peak flagged by the old detector during the
+   learning days would never be learned. The cross-day median is what protects it.
+2. Once a slot has enough history (3 previous days by default), compute the
    **residual** $r_t = x_t - \mathrm{profile}[\text{hour}(t)]$.
 3. Run the existing median/MAD detector, persistence filter and thresholds on the residual instead of the
    raw value. Until a slot has enough history, behaviour is exactly as today.
@@ -250,9 +275,11 @@ A slow EWMA ($\alpha = 0.01$, half-life about 69 windows) may be shown as a **tr
 
 ### Demonstrating it in a 24-hour event
 
-A real weekly pattern cannot be shown in a day. The simulator gets a **compressed day**: a 24-slot daily
-curve played back over 10 minutes, with the profile's "hour" mapped to simulated time. The demo then shows
-the evening peak raising no alert, and the same CPU level at simulated 3 a.m. raising one.
+A real weekly pattern cannot be shown in a day. **As built:** `python run_all.py --fresh --compressed-day 600`
+makes a "day" last 10 minutes, and web, app and db hosts get a normal evening peak (+28% CPU, hours 16-22).
+After 3 compressed days (30 minutes; `--seasonal-min-days 2` shortens it to 20) the evening peak raises no
+alert, while the collector console's **Night spike** button (the same level at whatever hour it is) does,
+explained as "vs N% expected for this hour (seasonal)".
 
 ### Acceptance criteria
 
@@ -277,6 +304,8 @@ level at a quiet hour, which must alert).
 | 3 | Feature 3: hour-of-day profiles, residual detection, compressed-day simulator mode, two benchmark scenarios | B4 from `bugs.md` (two-sided detection) is recommended first | 3 h |
 | 4 | Re-run the unit tests, the benchmark on five seeds and `verify.py --spawn`; put the measured numbers into this document and the README | 1-3 | 1 h |
 
+All four steps are done; see "Measured results" at the top.
+
 One feature per commit, each with its tests, following the rules in `plan.md`.
 
 ---
@@ -286,8 +315,8 @@ One feature per commit, each with its tests, following the rules in `plan.md`.
 **"How do you catch secrets without a keyword like `password`?"**
 "Regex patterns catch the known shapes. For the rest, the collector scores each long token on how random
 it is for its alphabet, its character mix and its context, and skips known ID formats. On our test corpus
-it flags [measured]% of secrets with [measured]% false positives on normal IDs. It can only add
-redactions: log text never leaves the collector either way."
+it caught 95.5% of 10,000 secrets with zero false positives on 14,000 normal IDs and log lines. It can only
+add redactions: log text never leaves the collector either way."
 
 **"Which signals contributed, and why scale orders-db and not checkout-api?"**
 "The breakdown shows each signal's share of the total deviation. Checkout's latency moved the most, but
