@@ -145,9 +145,10 @@ Every state change is written to the health history with UTC time, previous stat
 | collector polling for commands | long-poll / gRPC stream; mTLS per collector with short-lived certs from enrolment |
 | config file registry | control-plane DB with tenant → region pinning; replication between regions only via an explicit policy record |
 
-Measured today (docs/LOADTEST.md, real TLS + HMAC, full AIOps path, one process): about 107
-payloads/s or 3,900 metric points/s, which is roughly 100 collectors at one payload per second with
-p95 request latency around 1 s and zero loss. Past that, latency grows rather than data being
+Measured (docs/LOADTEST.md, real TLS + HMAC, full AIOps path, one process, one laptop): about
+90-107 payloads/s or 3,300-3,900 metric points/s; the best run reached 107, repeated runs on a busier
+machine 88-94. That is roughly 100 collectors at one payload per second, with p95 request latency
+between 0.3 and 1.5 s across runs and zero loss in every run. Past that, latency grows rather than data being
 dropped, because collectors hold payloads until acknowledged. Batches are written in one SQLite
 transaction each, and the health tick keeps open alerts in memory so it does not query per source.
 

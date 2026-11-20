@@ -3,7 +3,11 @@
 Found on 2026-11-20 by reading the code and then trying to break the running stack (`python run_all.py`).
 Every bug marked **Reproduced** was triggered on the live system and the result is quoted. Bugs marked
 **Code reading** were not triggered, usually because they need hours of uptime or a crash at a precise
-moment, but the cause is visible in the lines given.
+moment, but the cause is visible in the lines given. Line numbers refer to the code as it was when the
+bug was filed; fixes since then have moved some lines.
+
+Entries that turned out to be wrong or overstated are corrected in place and marked **Correction**
+(B5, B9), so the history of what was claimed stays visible.
 
 The fix plan is in [plan.md](plan.md).
 
@@ -19,7 +23,7 @@ The fix plan is in [plan.md](plan.md).
 | B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced | Fixed |
 | B7 | Medium | No brute-force protection on dashboard login | Reproduced | Open |
 | B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced | Open |
-| B9 | Medium | Collector sequence numbers restart after a long idle period, corrupting gap detection | Code reading | Open |
+| B9 | Low | Collector sequence numbers restart after 24 h without telemetry plus a restart | Code reading | Open |
 | B10 | Medium | A remediation command can get stuck in "dispatched" forever | Code reading | Open |
 | B11 | Medium | Any logged-in user can skew the dashboard latency SLO | Code reading | Open |
 | B12 | Low | "Heal all" on one collector console heals every tenant's simulated faults | Code reading | Fixed |
@@ -77,7 +81,9 @@ effect. The allow-list check does not catch this because it validates field name
 
 **Status: fixed** (commit "Fix B2"). The SaaS validates value formats (timestamps, finite numbers,
 counts) as well as field names, and processes each payload inside its own SQLite savepoint, so an
-unexpected error rolls back and rejects only that payload. The collector marks rejected payloads and
+unexpected error rolls back and rejects only that payload (a follow-up commit moved an import out of
+the validation hot path after an A/B load test showed it cost 8% throughput; HEAD now matches the
+pre-fix commit at 93.7 payloads/s). The collector marks rejected payloads and
 moves on; if a whole batch is refused with a 4xx it resends one payload at a time and rejects only
 the bad one. Tests: `tests/test_poison_batch.py` (4 tests, all failed before the change). Live
 re-run: the valid payload was accepted and stored, the malformed one rejected with
@@ -180,24 +186,32 @@ lockout and no logging of repeated failures.
 `events` or `health_history`). Payload bodies are stored in full.
 
 **Reproduced:** after 43 minutes with two collectors, the eu-west store held 2,097 payloads, 55,029
-metric rows and 1,895 latency rows, 16.2 MB, roughly 0.5 GB per day per region.
+metric rows and 1,895 latency rows, 16.2 MB. That is roughly 0.5 GB per day for a region with two
+collectors of four hosts each; it scales with the number of sources.
 
 **Impact:** the disk fills on a long-running demo or pilot, and queries over these tables (overview,
 reliability counts, SLO stats) slow down as history grows. The dashboard overview takes 17-20 ms and
 returns 144 KB per poll today; that cost rises with the payload count.
 
-## B9. Collector sequence numbers can restart (Medium)
+## B9. Collector sequence numbers can restart (Low)
 
 **Where:** `collector/collector.py:120` starts the counter from `MAX(seq)` in the outbox, and
 `collector/collector.py:554` deletes delivered rows older than 24 hours.
 
-**What happens:** if a collector is idle or stopped for more than 24 hours, retention can delete every
-outbox row. On restart `MAX(seq)` is empty and numbering starts again at 1. The SaaS still holds the
-old sequence numbers, so it flags new payloads as out of order and computes a nonsense gap count
-(`max_seq - count`).
+**What happens:** if a collector keeps running for more than 24 hours **without receiving any
+telemetry**, it creates no numbered payloads, so retention eventually deletes every numbered outbox
+row (heartbeat rows have no sequence number). If it is then restarted, `MAX(seq)` is empty and
+numbering starts again at 1. The SaaS still holds the old sequence numbers, so it flags new payloads
+as out of order and computes a wrong gap count (`max_seq - count`). Deleting the collector's data
+directory has the same effect.
 
-**Impact:** the "zero loss, provable by sequence numbers" claim breaks after a long outage, which is
-exactly when it matters.
+**Correction (found on re-check):** the original entry said "idle *or stopped* for more than 24 hours"
+and rated this Medium. Stopping is safe: retention does not run while the collector is stopped, and on
+restart the counter is read before the first retention pass (30 s later) and then kept in memory.
+The trigger is narrower than first stated, so severity is lowered to Low.
+
+**Impact:** gap detection and the out-of-order counter become wrong for that collector after the
+restart, which undermines the "zero loss, provable by sequence numbers" evidence.
 
 ## B10. Remediation commands can get stuck (Medium)
 
@@ -278,3 +292,8 @@ after an upgrade), the payload loops forever. Nothing escalates, apart from a co
 **What happens:** in many formats `name` is just a label, not a metric name. A record such as
 `{"name": "memory", "value": 512, "unit": "MB"}` is read as memory at 512%, which immediately looks
 like a critical fault. The fallback to `name` is too loose, and units are ignored.
+
+**Confirmed on re-check** (`--dry-run`): that record maps to `{"mem_pct": 512.0}`. It is also worse than
+first written: nothing downstream rejects a percentage above 100, neither the collector nor the SaaS
+value checks added for B2, so the impossible value reaches the dashboard. The fix should add range
+checks for percentage metrics as well as tightening the mapping.

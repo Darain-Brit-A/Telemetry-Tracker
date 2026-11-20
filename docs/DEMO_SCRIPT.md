@@ -76,8 +76,8 @@ per-collector sequence numbers for gap detection, and event-time merge of metric
 ID with *different* content is rejected with 409 and audited, and the collector only marks a payload
 delivered when the SaaS echoes the SHA-256 of the exact bytes it sent.
 
-**How would you scale?** Measured first: one process handles about 107 payloads/s (3,900 points/s),
-which is roughly 100 collectors at p95 ~1 s with zero loss (`tools/loadtest.py`, docs/LOADTEST.md).
+**How would you scale?** Measured first: one process handles about 90-107 payloads/s (3,300-3,900
+points/s, depending on machine load), which is roughly 100 collectors with zero loss (`tools/loadtest.py`, docs/LOADTEST.md).
 Beyond that, partition by region, then tenant, then source: stateless ingest behind regional load
 balancers, Kafka per region, a time-series store, and AIOps workers sharded by series (the detector
 is per series). See ARCHITECTURE §8.

@@ -91,7 +91,7 @@ format fed through the adapter.
 | Detector precision / recall (60 labelled trials) | 95% / 96% |
 | False alarms per host-hour of normal data | 0.5 |
 | Root cause correct on cascading faults | 80% |
-| Ingest capacity, single process | ~107 payloads/s (~3,900 points/s); 100 collectors fully served at p95 1.0 s, zero loss |
+| Ingest capacity, single process | about 90-107 payloads/s (3,300-3,900 points/s), varying with machine load between runs; 100 collectors at one payload/s each: ~94 accepted/s, zero errors, zero loss |
 
 ## Innovation highlights
 
@@ -120,8 +120,8 @@ format fed through the adapter.
 
 * Telemetry in the demo is simulated. The inputs are real (HTTP JSON, syslog UDP, file replay
   through the adapter) but there is no SNMP poller or NetFlow parser.
-* SQLite and a single process per tier with one lock. The load test shows the ceiling (~107
-  payloads/s). Production would use regional Kafka, a time-series store and AIOps workers
+* SQLite and a single process per tier with one lock. The load test shows the ceiling (about
+  90-107 payloads/s on this laptop, varying with machine load). Production would use regional Kafka, a time-series store and AIOps workers
   sharded by series (ARCHITECTURE section 8).
 * The dashboard runs plain HTTP on localhost with local users. Production needs TLS, SSO/OIDC and finer RBAC.
 * The collector console has no login. It only listens on 127.0.0.1 and refuses foreign Host and Origin headers.
