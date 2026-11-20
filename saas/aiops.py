@@ -448,10 +448,16 @@ class Engine:
         for a in st.rows("SELECT source_id, signal, kind, severity, detail FROM alerts WHERE tenant_id=? AND "
                          "status='open' AND source_id IS NOT NULL", (t,)):
             open_alerts[a["source_id"]].append(a)
+        # freshness counts every metric a source reports, not only the threshold metrics, so a
+        # bandwidth-only device is not shown as "no data" (bug B6)
+        newest_by_source = {}
+        for (tt, ss, _), (ts, _) in self.latest.items():
+            if tt == t and ts > newest_by_source.get(ss, 0):
+                newest_by_source[ss] = ts
         for src in st.rows("SELECT * FROM sources WHERE tenant_id=?", (t,)):
             sid = src["source_id"]
             state, reasons = 0, []
-            newest = 0
+            newest = newest_by_source.get(sid, 0)
             for name, thr in T["thresholds"].items():
                 lv = self.latest.get((t, sid, name))
                 if not lv:

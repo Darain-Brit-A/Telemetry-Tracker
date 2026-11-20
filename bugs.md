@@ -16,7 +16,7 @@ The fix plan is in [plan.md](plan.md).
 | B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced | Fixed |
 | B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | Open |
 | B5 | Medium | Search on both proof panels treats `_` and `%` as wildcards and can report false leaks | Reproduced | Fixed |
-| B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced | Open |
+| B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced | Fixed |
 | B7 | Medium | No brute-force protection on dashboard login | Reproduced | Open |
 | B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced | Open |
 | B9 | Medium | Collector sequence numbers restart after a long idle period, corrupting gap detection | Code reading | Open |
@@ -158,6 +158,11 @@ bw-only-1 -> ('Poor', 'no data - last value NOT shown as current')
 **Impact:** network devices or flow exporters that only report traffic are permanently Poor and also
 raise a stale-data alert, which is a false alarm. The same applies to any organizer source whose
 fields map only to bandwidth.
+
+**Status: fixed** (commit "Fix B6"). Freshness now uses the newest reading of any metric the source
+reports. Tests: `tests/test_freshness.py` (the bandwidth-only case failed before; the check that a
+genuinely silent source still goes Poor passes before and after). Live re-run: `bw-only-1` is
+Excellent, "all metrics within baseline and thresholds", with no stale alert.
 
 ## B7. No brute-force protection on login (Medium)
 
