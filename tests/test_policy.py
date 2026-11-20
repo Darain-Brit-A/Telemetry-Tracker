@@ -82,5 +82,23 @@ class Pseudonyms(unittest.TestCase):
         self.assertRegex(a, r"^src-[0-9a-f]{10}$")
 
 
+
+class DlpDoesNotFlagIds(unittest.TestCase):
+    """B19: a UUID payload ID can contain a 16-digit, Luhn-valid run and was blocked as a card number."""
+
+    def test_the_payload_id_that_was_lost(self):
+        self.assertEqual(dlp_scan('{"payload_id":"f6411f1b-2217-40b5-9244-652875177458"}'), [])
+
+    def test_random_uuids_never_flagged(self):
+        import json
+        import uuid
+        flagged = [u for u in (str(uuid.uuid4()) for _ in range(50000)) if dlp_scan(json.dumps({"payload_id": u}))]
+        self.assertEqual(flagged, [])
+
+    def test_real_card_numbers_still_caught(self):
+        self.assertIn("credit_card", dlp_scan('{"context":"card 4111-1111-1111-1111 declined"}'))
+        self.assertIn("credit_card", dlp_scan('{"context":"pan 4111111111111111"}'))
+
+
 if __name__ == "__main__":
     unittest.main()

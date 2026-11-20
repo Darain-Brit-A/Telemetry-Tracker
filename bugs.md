@@ -33,6 +33,7 @@ The fix plan is in [plan.md](plan.md).
 | B16 | Low | Validation report prints "render-ack p95 0.00s" when there were no samples | Code reading | Fixed |
 | B17 | Low | An acknowledgement digest mismatch is retried forever with no escalation | Code reading | Open |
 | B18 | Low | Stream adapter can map a record's `name` / `value` fields as a metric by mistake | Code reading | Open |
+| B19 | Medium | About 1 in 9,000 payloads is blocked by DLP because its UUID looks like a card number | Reproduced (verify run) | Fixed |
 
 ---
 
@@ -297,3 +298,26 @@ like a critical fault. The fallback to `name` is too loose, and units are ignore
 first written: nothing downstream rejects a percentage above 100, neither the collector nor the SaaS
 value checks added for B2, so the impossible value reaches the dashboard. The fix should add range
 checks for percentage metrics as well as tightening the mapping.
+
+## B19. DLP blocks payloads whose ID looks like a card number (Medium)
+
+**Found:** after the original report, by the full end-to-end run on the Phase 1 code (16/17: the
+outage check reported one sequence gap).
+
+**Where:** `common/policy.py`, `dlp_scan()`. The card-number pattern allows a dash between digits,
+and payload IDs are UUIDs.
+
+**What happens:** a UUID such as `f6411f1b-2217-40b5-9244-652875177458` contains `9244-652875177458`,
+which is 16 digits and passes the Luhn check. The collector's DLP blocked the real payload and sent an
+empty marker with the same ID to keep the sequence unbroken; the SaaS's DLP then rejected the marker
+for the same reason. That window of data was lost and the SaaS showed a sequence gap.
+
+**Reproduced:** collector outbox row `seq 135, status rejected, note "DLP: ['credit_card']"` with zero
+metrics and events; `dlp_scan()` on its body returned `['credit_card']`; 22 of 200,000 random UUIDs
+were flagged (0.011%, about one payload every 50 minutes with three collectors). Earlier runs passed
+by luck.
+
+**Status: fixed** (commit "Fix B19"). UUIDs are masked before the DLP patterns run; they are generated
+by the system, never copied from user content. Tests in `tests/test_policy.py`: the exact lost ID
+and 50,000 random UUIDs are no longer flagged, while card numbers with and without dashes in free
+text still are.
