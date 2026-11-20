@@ -348,15 +348,11 @@ def main():
     ap.add_argument("--replay", help="replay a JSONL stream instead of generating one")
     ap.add_argument("--keep-ts", action="store_true")
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--collectors", help="comma-separated collector ids to feed (default: all in the config)")
     args = ap.parse_args()
     random.seed(args.seed)
     cfg = load_json(os.path.join(CONFIG_DIR, "simulator.json"))
     if not cfg:
         sys.exit("config/simulator.json missing - run setup_env.py")
-    if args.collectors:
-        keep = set(args.collectors.split(","))
-        cfg["collectors"] = {c: v for c, v in cfg["collectors"].items() if c in keep}
     if args.replay:
         replay(cfg, args.replay, args.keep_ts)
         return

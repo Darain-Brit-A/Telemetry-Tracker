@@ -9,7 +9,6 @@ Re-running keeps existing secrets unless --force is given.
 """
 import argparse
 import hashlib
-import ipaddress
 import os
 import secrets
 import shutil
@@ -108,26 +107,9 @@ def pbkdf2(password, salt):
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 120_000).hex()
 
 
-def server_san(saas_host=None):
-    """Names the SaaS certificate is valid for: always localhost, plus the SaaS machine's IP or DNS name
-    when collectors on other machines connect to it (setup_env.py --saas-host)."""
-    names = ["DNS:localhost", "IP:127.0.0.1"]
-    if saas_host and saas_host not in ("localhost", "127.0.0.1"):
-        try:
-            ipaddress.ip_address(saas_host)
-            names.append(f"IP:{saas_host}")
-        except ValueError:
-            names.append(f"DNS:{saas_host}")
-    return ",".join(names)
-
-
-def server_ext(saas_host=None):
-    return (f"subjectAltName={server_san(saas_host)}\nbasicConstraints=CA:FALSE\n"
-            "keyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
-            "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
-
-
-SERVER_EXT = server_ext()
+SERVER_EXT = ("subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\n"
+              "keyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
+              "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
 CLIENT_EXT = ("basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n"
               "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
 CLIENT_DIR = os.path.join(CERT_DIR, "collectors")
@@ -140,10 +122,9 @@ def client_cert_paths(cid):
     return os.path.join(CLIENT_DIR, f"{cid}.crt"), os.path.join(CLIENT_DIR, f"{cid}.key")
 
 
-def make_certs(force, collector_ids, saas_host=None):
+def make_certs(force, collector_ids):
     """Returns (tls, mtls). Existing certificates are kept unless `force`; missing client
-    certificates are issued from the existing CA, and the server certificate is re-issued (same CA, so
-    collector certificates stay valid) when the SaaS host name / IP it must cover changes."""
+    certificates are issued from the existing CA."""
     os.makedirs(CLIENT_DIR, exist_ok=True)
     os.makedirs(CA_KEY_DIR, exist_ok=True)
     ca_crt, ca_key = os.path.join(CERT_DIR, "ca.crt"), os.path.join(CA_KEY_DIR, "ca.key")
@@ -161,10 +142,7 @@ def make_certs(force, collector_ids, saas_host=None):
         os.remove(os.path.join(CERT_DIR, "server.csr"))
     have_ca = os.path.exists(ca_crt) and not force
     missing = [c for c in collector_ids if force or not os.path.exists(client_cert_paths(c)[0])]
-    san_file = os.path.join(CERT_DIR, "server_san.txt")
-    want_san = server_san(saas_host)
-    have_san = open(san_file).read().strip() if os.path.exists(san_file) else server_san()
-    if have_ca and not missing and have_san == want_san:
+    if have_ca and not missing:
         return True, True
     openssl = shutil.which("openssl")
     if not openssl:
@@ -188,19 +166,12 @@ def make_certs(force, collector_ids, saas_host=None):
             "-days", "365", "-subj", "/CN=AIOps Demo Root CA",
             "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
             "-addext", "subjectKeyIdentifier=hash")
-    if not have_ca or have_san != want_san:
-        if not os.path.exists(ca_key):
-            print("!! CA private key not found - cannot re-issue the server certificate for the new SaaS host")
-            return True, False
         run("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr",
             "-subj", "/CN=localhost")
         run("x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", ca_key, "-CAserial", ca_srl,
-            "-CAcreateserial", "-out", "server.crt", "-days", "365",
-            "-extfile", ext_file("san.ext", server_ext(saas_host)))
+            "-CAcreateserial", "-out", "server.crt", "-days", "365", "-extfile", ext_file("san.ext", SERVER_EXT))
         os.remove(os.path.join(CERT_DIR, "server.csr"))
-        with open(san_file, "w") as f:
-            f.write(want_san)
-        print(f"   TLS: {'private CA + ' if not have_ca else ''}server certificate for {want_san} in config/certs")
+        print("   TLS: private CA + server certificate created in config/certs")
     if not os.path.exists(ca_key):
         print("!! CA private key not found - cannot issue client certificates; mutual TLS disabled.")
         return True, False
@@ -212,46 +183,28 @@ def make_certs(force, collector_ids, saas_host=None):
         run("x509", "-req", "-in", csr, "-CA", "ca.crt", "-CAkey", ca_key, "-CAserial", ca_srl,
             "-CAcreateserial", "-out", crt, "-days", "365", "-extfile", client_ext)
         os.remove(csr)
-    if missing:
-        print(f"   mTLS: {len(missing)} collector client certificate(s) issued in config/certs/collectors")
+    print(f"   mTLS: {len(missing)} collector client certificate(s) issued in config/certs/collectors")
     return True, True
-
-
-def rel(path):
-    """Path relative to the config folder when it is inside it (portable collector configs)."""
-    r = os.path.relpath(path, CONFIG_DIR)
-    return path if r.startswith("..") else r.replace(os.sep, "/")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="regenerate secrets and certificates")
-    ap.add_argument("--saas-host", metavar="IP_OR_NAME",
-                    help="run collectors on other machines: the SaaS machine's LAN IP or DNS name (e.g. "
-                         "192.168.1.20). The ingest port then listens on the network and the server certificate "
-                         "covers this name. Kept on later runs; 'local' switches back to this machine only.")
     args = ap.parse_args()
     os.makedirs(CONFIG_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
+    collector_ids = [cid for t in TENANTS.values() for cid in t["collectors"]]
+    tls, mtls = make_certs(args.force, collector_ids)
+    scheme = "https" if tls else "http"
+    ingest_base = f"{scheme}://127.0.0.1:{SAAS_INGEST_PORT}"
+
     reg_path = os.path.join(CONFIG_DIR, "registry.json")
     old = {} if args.force else (load_json(reg_path, {}) or {})
-    saas_host = args.saas_host if args.saas_host is not None else old.get("ingest_public_host", "127.0.0.1")
-    if saas_host in ("local", "localhost"):
-        saas_host = "127.0.0.1"
-    remote = saas_host != "127.0.0.1"
-
-    collector_ids = [cid for t in TENANTS.values() for cid in t["collectors"]]
-    tls, mtls = make_certs(args.force, collector_ids, saas_host if remote else None)
-    scheme = "https" if tls else "http"
-    url_host = f"[{saas_host}]" if ":" in saas_host else saas_host
-    ingest_base = f"{scheme}://{url_host}:{SAAS_INGEST_PORT}"
     old_secrets = {cid: c["secret"] for cid, c in old.get("collectors", {}).items()}
 
     registry = {"regions": REGIONS, "tenants": {}, "collectors": {}, "users": {}, "tls": tls, "mtls": mtls, "setup_version": SETUP_VERSION,
-                "dashboard_port": SAAS_DASH_PORT, "ingest_port": SAAS_INGEST_PORT,
-                # collectors on other machines: ingest listens on all interfaces (mTLS + HMAC still required)
-                "ingest_bind": "0.0.0.0" if remote else "127.0.0.1", "ingest_public_host": saas_host}
+                "dashboard_port": SAAS_DASH_PORT, "ingest_port": SAAS_INGEST_PORT}
     sim = {"port": SIM_PORT, "collectors": {}}
 
     for tid, t in TENANTS.items():
@@ -284,10 +237,9 @@ def main():
                 "site": c["site"],
                 "tz": c["tz"],
                 "saas_url": ingest_base,          # global entry point; region discovered at startup
-                # relative to the config folder, so an exported collector bundle works on another machine
-                "ca_file": rel(os.path.join(CERT_DIR, "ca.crt")) if tls else None,
-                "client_cert": rel(crt) if mtls else None,
-                "client_key": rel(key) if mtls else None,
+                "ca_file": os.path.join(CERT_DIR, "ca.crt") if tls else None,
+                "client_cert": crt if mtls else None,
+                "client_key": key if mtls else None,
                 "ui_port": c["ui_port"],
                 "syslog_port": c["syslog_port"],
                 "window_s": 1,
@@ -311,9 +263,6 @@ def main():
     save_json(os.path.join(CONFIG_DIR, "simulator.json"), sim)
     print(f"   Registry: {len(registry['tenants'])} tenants, {len(registry['collectors'])} collectors, "
           f"{len(registry['users'])} users -> config/registry.json")
-    if remote:
-        print(f"   Collectors on other machines connect to {ingest_base} (ingest listens on all interfaces).")
-        print("   Export a collector for another laptop: python tools/export_collector.py <collector-id>")
     print("Setup complete.")
 
 

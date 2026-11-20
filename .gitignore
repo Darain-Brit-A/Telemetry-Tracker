@@ -4,6 +4,3 @@ data/
 __pycache__/
 *.pyc
 
-# collector bundles (contain secrets and private keys)
-export/
-*.zip

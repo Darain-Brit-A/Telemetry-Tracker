@@ -82,12 +82,6 @@ def template_of(msg):
     return t
 
 
-def config_path(p):
-    """Certificate paths in a collector config are relative to the config folder, so a collector bundle
-    (tools/export_collector.py) works wherever it is unpacked; absolute paths are used as they are."""
-    return p if not p or os.path.isabs(p) else os.path.join(CONFIG_DIR, p)
-
-
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     """Turn every 3xx from the SaaS into an error instead of following it to another URL."""
 
@@ -114,8 +108,7 @@ class Collector:
         self.ssl_ctx = None
         if cfg.get("ca_file"):
             # TLS 1.3, pinned private CA, hostname checked; our own client certificate for mutual TLS
-            self.ssl_ctx = client_context(config_path(cfg["ca_file"]), config_path(cfg.get("client_cert")),
-                                          config_path(cfg.get("client_key")))
+            self.ssl_ctx = client_context(cfg["ca_file"], cfg.get("client_cert"), cfg.get("client_key"))
         # redirects are refused: metadata only ever goes to the configured SaaS origin
         self.opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=self.ssl_ctx), NoRedirect)
         self.ingest_base = None

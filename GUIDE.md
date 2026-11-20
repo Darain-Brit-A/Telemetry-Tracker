@@ -1,6 +1,6 @@
 # Complete guide: Secure AIOps Observability
 
-Everything in one place: what the system is, how to run it on one laptop or two, what to show, how the AI
+Everything in one place: what the system is, how to run it, what to show, how the AI
 works, how it is secured, how to prove it works, and what to do when something goes wrong.
 
 ---
@@ -16,13 +16,12 @@ works, how it is secured, how to prove it works, and what to do when something g
 7. [How the AI / ML works](#7-how-the-ai--ml-works)
 8. [Health limits: Learned (ML) or Manual](#8-health-limits-learned-ml-or-manual)
 9. [Security: what protects what](#9-security-what-protects-what)
-10. [Run Tier 1 and Tier 2 on two laptops](#10-run-tier-1-and-tier-2-on-two-laptops)
-11. [Feed your own data](#11-feed-your-own-data)
-12. [Prove it works: tests, validation, benchmark, load test](#12-prove-it-works)
-13. [Suggested 10-minute demo](#13-suggested-10-minute-demo)
-14. [Command cheat sheet](#14-command-cheat-sheet)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Where things are](#16-where-things-are)
+10. [Feed your own data](#10-feed-your-own-data)
+11. [Prove it works: tests, validation, benchmark, load test](#11-prove-it-works)
+12. [Suggested 10-minute demo](#12-suggested-10-minute-demo)
+13. [Command cheat sheet](#13-command-cheat-sheet)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Where things are](#15-where-things-are)
 
 ---
 
@@ -258,99 +257,7 @@ managed PKI on a separate machine. Details: `HOST_TO_SAAS_SECURITY.md`.
 
 ---
 
-## 10. Run Tier 1 and Tier 2 on two laptops
-
-**Laptop A** runs the SaaS (Tier 2). **Laptop B** runs the collectors (Tier 1). Only port 8443 on laptop A
-is opened, protected by mutual TLS and signatures. Both laptops must be on the **same network**, set to
-**Private**, with clocks within 5 minutes of each other.
-
-### Laptop A (SaaS)
-
-1. Get the code (section 2) and find laptop A's Wi-Fi address:
-
-   ```powershell
-   Get-NetIPAddress -AddressFamily IPv4 | Where-Object InterfaceAlias -like '*Wi*Fi*' | Select-Object IPAddress
-   ```
-
-   Below, replace `192.168.1.20` with that address.
-
-2. Point the setup at it (re-issues only the server certificate; collector certificates stay valid):
-
-   ```powershell
-   python setup_env.py --saas-host 192.168.1.20
-   ```
-
-3. Settings → Network & internet → Wi-Fi → your network → **Network profile type: Private**. Then, in
-   **PowerShell as Administrator**, allow the port:
-
-   ```powershell
-   New-NetFirewallRule -DisplayName "AIOps SaaS ingest 8443" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private
-   ```
-
-4. Export all collectors as one bundle (written to the git-ignored `export` folder):
-
-   ```powershell
-   python tools/export_collector.py col-acme-dc1 col-acme-cloud col-globex-nyc col-air-blr col-air-del col-air-bom col-air-maa --out export
-   ```
-
-5. Copy `export\collectors-7.zip` (and `config\pollution.json` for the live air data) to a USB stick.
-   The zip holds the collectors' secrets and private keys: treat it like a password.
-
-6. Start only the SaaS, then open http://localhost:8080:
-
-   ```powershell
-   python run_all.py --saas-only
-   ```
-
-### Laptop B (collectors)
-
-1. Join the same network (Private). Install Python 3.12+ and Git, then get the code (section 2).
-2. Check laptop A is reachable; it must print `True`:
-
-   ```powershell
-   Test-NetConnection 192.168.1.20 -Port 8443 -InformationLevel Quiet
-   ```
-
-3. Unpack the bundle into the project folder (change `E:` to your USB drive):
-
-   ```powershell
-   Expand-Archive E:\collectors-7.zip -DestinationPath .
-   ```
-   ```powershell
-   Copy-Item E:\pollution.json config\pollution.json
-   ```
-
-4. Start all of Tier 1:
-
-   ```powershell
-   python run_all.py --collector col-acme-dc1 --collector col-acme-cloud --collector col-globex-nyc --collector col-air-blr --collector col-air-del --collector col-air-bom --collector col-air-maa
-   ```
-
-5. Delete the zip and `pollution.json` from the USB stick.
-
-### Check
-
-* Laptop A's dashboard: every tenant's collectors **Online / Excellent** under Fleet & sources, with data.
-* Laptop B: each collector console (http://127.0.0.1:9101 to 9107) shows "delivered" climbing with no
-  send errors.
-
-You can also move only some collectors: export just those, start laptop A with
-`python run_all.py --exclude <id>` (repeat for each), and laptop B with `--collector <id>`.
-
-**Afterwards:** remove the firewall rule (as Administrator) and switch laptop A back to single-machine mode:
-
-```powershell
-Remove-NetFirewallRule -DisplayName "AIOps SaaS ingest 8443"
-```
-```powershell
-python setup_env.py --saas-host local
-```
-
-More detail and a troubleshooting table: `docs/TWO_MACHINES.md`.
-
----
-
-## 11. Feed your own data
+## 10. Feed your own data
 
 Any program on the collector's machine can post JSON events to its `/ingest` with the collector's token
 (`ingest_token` in `config/collectors/<id>.json`):
@@ -374,7 +281,7 @@ Syslog can be sent over UDP to the collector's syslog port (5141 and up), from t
 
 ---
 
-## 12. Prove it works
+## 11. Prove it works
 
 | Check | Command | Current result |
 |---|---|---|
@@ -389,7 +296,7 @@ the unit tests and a benchmark gate on Linux and Windows for every push (`.githu
 
 ---
 
-## 13. Suggested 10-minute demo
+## 12. Suggested 10-minute demo
 
 1. **Start** (`python run_all.py --fresh`), sign in as `acme-admin`; show the overview and charts (1 min).
 2. **Local-first**: on console :9101 click *Secret in raw log* and *Repeated failed logins*; show the SaaS
@@ -403,23 +310,16 @@ the unit tests and a benchmark gate on Linux and Windows for every push (`.githu
    *Performance & reliability* (1 min).
 6. **Real data**: sign in as `cityair-admin`; show the city comparison, Delhi's trend, a monitor's learned
    limits, and an "Air quality" incident with its CPCB category (2 min).
-7. **Two tiers for real** (optional): run the collectors on a second laptop (section 10) (1 min).
 
 ---
 
-## 14. Command cheat sheet
+## 13. Command cheat sheet
 
 | Task | Command |
 |---|---|
 | Start everything (clean) | `python run_all.py --fresh` |
-| Start only the SaaS | `python run_all.py --saas-only` |
-| Start everything except some collectors | `python run_all.py --exclude col-acme-dc1` |
-| Start only some collectors (other laptop) | `python run_all.py --collector col-acme-dc1` |
 | Re-create config (keeps secrets) | `python setup_env.py` |
 | Re-create everything, new secrets and certificates | `python setup_env.py --force` |
-| Accept collectors from other machines | `python setup_env.py --saas-host <IP or name>` |
-| Back to one machine | `python setup_env.py --saas-host local` |
-| Export collectors for another machine | `python tools/export_collector.py <id> [<id> ...] --out export` |
 | Seasonal demo with a 10-minute day | `python run_all.py --fresh --compressed-day 600` |
 | Check the OpenAQ feed | `python tools/openaq_poller.py --once` |
 | Replay your own data | `python tools/stream_adapter.py <file> --collector <id>` |
@@ -427,7 +327,7 @@ the unit tests and a benchmark gate on Linux and Windows for every push (`.githu
 
 ---
 
-## 15. Troubleshooting
+## 14. Troubleshooting
 
 | Problem | Cause | Fix |
 |---|---|---|
@@ -435,29 +335,25 @@ the unit tests and a benchmark gate on Linux and Windows for every push (`.githu
 | Dashboard shows "no data" / everything Fair at first | baselines are still learning | wait about 40 s after start |
 | No live air tenant data | no OpenAQ key | create `config/pollution.json` (section 6) |
 | Air cards say "stale" | the official monitor has not published for hours | normal for some monitors; it recovers when they publish |
-| Laptop B: `Test-NetConnection` prints `False` | firewall rule missing, different network, network set to Public, or the hotspot isolates devices | section 10 step A3; same Wi-Fi; set it to Private; try a normal router |
-| Laptop B: certificate error mentioning an IP | laptop A's address changed | on A: `setup_env.py --saas-host <new IP>`, export again |
-| Laptop B: `401 client certificate not enrolled` | the bundle came from an older setup | export again on laptop A |
 | `401 timestamp outside allowed skew` | clocks more than 5 minutes apart | sync the time on both machines |
 | `openssl not found` | openssl not on PATH | install Git for Windows or OpenSSL; without it the demo runs without TLS |
 | Wrong times shown | time-zone mode | use the **Times** selector (UTC / source / local) |
 
 ---
 
-## 16. Where things are
+## 15. Where things are
 
 | Path | What |
 |---|---|
-| `run_all.py` | starts the whole demo or parts of it (section 14) |
+| `run_all.py` | starts the whole demo (section 13) |
 | `setup_env.py` | creates the CA and certificates, tenants, collectors, users, secrets |
 | `collector/collector.py`, `collector/ui.html` | Tier 1 collector and its console |
 | `saas/server.py`, `saas/aiops.py`, `saas/store.py`, `saas/static/` | Tier 2: API, AI engine, per-region storage, dashboard |
 | `common/` | shared code: data policy and DLP (`policy.py`, `data_policy.json`), TLS (`tlsserver.py`), web hardening (`web.py`), signing and time (`util.py`) |
 | `simulator/stream.py` | simulated telemetry and the demo scenarios |
-| `tools/` | `openaq_poller.py` (live air data), `export_collector.py`, `stream_adapter.py`, `verify.py`, `benchmark.py`, `loadtest.py` |
+| `tools/` | `openaq_poller.py` (live air data), `stream_adapter.py`, `verify.py`, `benchmark.py`, `loadtest.py` |
 | `tests/` | unit tests |
 | `config/` (git-ignored) | generated secrets, certificates, registry, collector configs, your OpenAQ key |
 | `data/` (git-ignored) | stored data of the SaaS and the collectors |
-| `export/` (git-ignored) | exported collector bundles |
-| `docs/` | architecture, demo script, validation report, benchmark, load test, two-machine guide |
+| `docs/` | architecture, demo script, validation report, benchmark, load test |
 | `HOST_TO_SAAS_SECURITY.md`, `AIOPS_ML_FEATURES_MASTER.md` | security design and ML features in depth |
