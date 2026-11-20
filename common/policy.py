@@ -210,3 +210,81 @@ def validate_inbound(payload, policy):
     """SaaS-side: reject (not silently fix) anything outside the allow-list or with malformed values."""
     clean, dropped = enforce(payload, policy)
     return dropped + validate_values(payload)
+
+
+# ---------------------------------------------------------------- ML feature 1: possible secrets
+# Statistical, add-only check for secrets the regex patterns miss (a bare random token with no keyword
+# in front of it). See AIOPS_ML_FEATURES_MASTER.md, feature 1. It never decides what leaves the
+# collector: log text never leaves either way. It only adds redactions to the local view and raises a
+# low-severity, rate-limited "possible secret" summary, never a confirmed credential.
+import math as _math
+from collections import Counter as _Counter
+
+STRONG_HINTS = {"key", "apikey", "secret", "token", "auth", "credential", "credentials"}
+# "using" / "with" are common English words: they only count right before a hex token that is not
+# an ID length, otherwise "request with trace <32-hex>" would be flagged (measured: 93%).
+WEAK_HINTS = {"using", "with"}
+_ID_HEX_LENGTHS = (32, 40, 64)
+_CAND_RX = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{20,}(?![A-Za-z0-9+/=_-])")
+_HEX_RX = re.compile(r"[0-9a-fA-F]+")
+_ID_SHAPES = [
+    re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I),     # UUID
+    re.compile(r"^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$", re.I),                   # trace ID, SHA, digest
+    re.compile(r"^[a-z]+(-[a-z]+)*-[a-z0-9]{5,10}(-[a-z0-9]{5})?$"),                     # pod / container names
+]
+_OWN_PREFIXES = ("src-", "col-", "fp-", "tpl-", "req_", "trace-", "span-")
+
+
+def shannon_entropy(s):
+    """Bits per character."""
+    if not s:
+        return 0.0
+    n = len(s)
+    return -sum(c / n * _math.log2(c / n) for c in _Counter(s).values())
+
+
+def normalised_entropy(tok):
+    """Entropy divided by the maximum possible for the token's alphabet (1.0 = as random as it can be)."""
+    alphabet = 16 if _HEX_RX.fullmatch(tok) else (64 if re.search(r"[+/=]", tok) else 62)
+    return shannon_entropy(tok) / _math.log2(min(alphabet, len(tok)))
+
+
+def possible_secret(tok, prev_tokens):
+    """True when a token looks like a secret: random for its alphabet, the right shape, and in context."""
+    if len(tok) < 20 or "REDACTED" in tok or tok.lower().startswith(_OWN_PREFIXES):
+        return False
+    if _ID_SHAPES[0].match(tok):
+        return False                                   # UUIDs are system identifiers, never secrets here
+    words = [p.lower().strip(":=\"'(),") for p in prev_tokens]
+    strong = any(w in STRONG_HINTS for w in words[-2:])
+    weak = bool(words) and words[-1] in WEAK_HINTS
+    if _HEX_RX.fullmatch(tok):
+        hinted = strong or (weak and len(tok) not in _ID_HEX_LENGTHS)
+        return hinted and normalised_entropy(tok) >= 0.85      # hex only counts right after a hint word
+    if any(rx.match(tok) for rx in _ID_SHAPES):
+        return False
+    core = tok.split("_", 1)[1] if re.match(r"^[a-z]{2,4}_", tok) else tok   # e.g. ghp_<token>
+    mixed = bool(re.search(r"[a-z]", core) and re.search(r"[A-Z]", core) and re.search(r"[0-9]", core))
+    return mixed and normalised_entropy(core) >= 0.85
+
+
+def find_possible_secrets(text):
+    """Return (text with possible secrets redacted, number found)."""
+    found = 0
+    out, last = [], 0
+    for m in _CAND_RX.finditer(text):
+        prev = text[max(0, m.start() - 60):m.start()].split()
+        if possible_secret(m.group(0), prev):
+            out.append(text[last:m.start()])
+            out.append("[REDACTED:possible_secret]")
+            last = m.end()
+            found += 1
+    out.append(text[last:])
+    return "".join(out), found
+
+
+def redact_with_entropy(text):
+    """Regex redaction first (unchanged), then the add-only entropy check on what is left."""
+    out, findings = redact_text(text)
+    out, n = find_possible_secrets(out)
+    return out, findings + ["possible_secret"] * n

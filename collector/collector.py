@@ -33,7 +33,7 @@ import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from common.policy import CREDENTIAL_TYPES, dlp_scan, enforce, load_policy, pseudonymize, redact_text  # noqa: E402
+from common.policy import CREDENTIAL_TYPES, dlp_scan, enforce, load_policy, pseudonymize, redact_with_entropy  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
 from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, sha256_hex, \
     sign  # noqa: E402
@@ -187,7 +187,7 @@ class Collector:
             ts = self._clock_skew(host, ts, recv)
         self.stats["raw_events_total"] += 1
         raw = json.dumps(ev) if transport == "http" else ev.get("_raw", json.dumps(ev))
-        redacted, findings = redact_text(raw)
+        redacted, findings = redact_with_entropy(raw)
         if findings:
             self.stats["redactions_total"] += len(findings)
         self.x("INSERT INTO raw_events(received_ms,ts_ms,host,type,raw,redacted,findings) VALUES(?,?,?,?,?,?,?)",
@@ -263,8 +263,9 @@ class Collector:
                                  "Service health check failing on source")
 
     def _log(self, host, ts, level, message):
-        redacted, findings = redact_text(message)
+        redacted, findings = redact_with_entropy(message)
         creds = [f for f in findings if f in CREDENTIAL_TYPES]
+        possible = findings.count("possible_secret")
         fp = "fp-" + hashlib.sha256(template_of(redacted).encode()).hexdigest()[:8]
         with self.lock:
             dq = self.logs[host]
@@ -280,6 +281,8 @@ class Collector:
                 self.pending_events.append(self._ev(host, ts, "security.secret_in_log", sev, 1,
                                                     f"1 log line contained credential material ({', '.join(types)}); "
                                                     f"redacted, raw retained locally only", fp))
+            if possible:
+                self._possible_secret(host, ts, possible, redacted, fp)
             errors = [e for e in dq if e[1] in ("ERROR", "CRITICAL") and e[0] >= ts - 10_000]
             if len(errors) >= 5:
                 top = collections.Counter(e[2] for e in errors).most_common(1)[0][0]
@@ -290,6 +293,24 @@ class Collector:
                 if same >= 10:
                     self._event_once(host, ts, "log.recurring_warning", "low", same,
                                      f"Warning template {fp} repeated {same}x in 60s", fp, every_ms=30_000, key=fp)
+
+    def _possible_secret(self, host, ts, n, redacted, fp):
+        """ML feature 1: a statistical hit is not a confirmed credential. Record it locally and send one
+        low-severity summary per source per minute (count only), never one alert per line."""
+        self.findings.appendleft({"ts": iso(ts), "host": host, "kind": "possible_secret",
+                                  "detail": f"{n} high-entropy token(s) that look like secrets (heuristic)",
+                                  "raw_redacted": redacted[:160]})
+        key = ("possible_secret", host)
+        last_ts, pending = self.last_emit.get(key, (0, 0))
+        pending += n
+        if ts - last_ts >= 60_000:
+            self.last_emit[key] = (ts, 0)
+            self.pending_events.append(self._ev(
+                host, ts, "security.possible_secret", "low", pending,
+                f"{pending} token(s) in logs look like secrets (entropy heuristic, not confirmed); "
+                f"redacted in the local view, raw retained locally only", fp))
+        else:
+            self.last_emit[key] = (last_ts, pending)
 
     def _auth(self, host, ts, user, ip, ok, method):
         thr = self.cfg.get("auth_burst_threshold", 5)
