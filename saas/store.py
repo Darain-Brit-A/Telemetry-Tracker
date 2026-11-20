@@ -7,6 +7,7 @@ and collector registration only - never telemetry.
 Tenant isolation: every table carries tenant_id, and every read helper takes the tenant_id
 from the authenticated session/credential (never from user input).
 """
+import contextlib
 import os
 import sqlite3
 import threading
@@ -56,6 +57,27 @@ class RegionStore:
         self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.executescript(SCHEMA)
         self.lock = threading.RLock()
+        self._depth = 0
+
+    @contextlib.contextmanager
+    def transaction(self):
+        """Group many writes into one SQLite transaction (re-entrant). Per-statement autocommit was
+        the main throughput limit in the load test."""
+        with self.lock:
+            outer = self._depth == 0
+            if outer:
+                self.db.execute("BEGIN")
+            self._depth += 1
+            try:
+                yield
+            except BaseException:
+                self._depth -= 1
+                if outer:
+                    self.db.execute("ROLLBACK")
+                raise
+            self._depth -= 1
+            if outer:
+                self.db.execute("COMMIT")
 
     def q(self, sql, args=()):
         with self.lock:
