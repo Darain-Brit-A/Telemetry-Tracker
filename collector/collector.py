@@ -35,7 +35,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.policy import CREDENTIAL_TYPES, dlp_scan, enforce, load_policy, pseudonymize, redact_text  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
-from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, load_json, now_ms, parse_iso, sha256_hex, sign  # noqa: E402
+from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, sha256_hex, \
+    sign  # noqa: E402
 
 VERSION = "1.4.0"
 METRIC_NAMES = None  # filled from policy
@@ -582,6 +583,13 @@ class Collector:
                 self.audit("collector", "retention_purge", f"purged {n} raw events older than "
                            f"{self.cfg['raw_retention_min']} min")
 
+    def search(self, term):
+        """'Prove it stayed local': count the term in the local raw store vs. in outbound payloads."""
+        pat = like_contains(term)
+        n = self.q(r"SELECT COUNT(*) FROM raw_events WHERE raw LIKE ? ESCAPE '\'", (pat,))[0][0] if term else 0
+        m = self.q(r"SELECT COUNT(*) FROM egress WHERE body LIKE ? ESCAPE '\'", (pat,))[0][0] if term else 0
+        return {"term": term, "raw_matches_local": n, "egress_matches": m}
+
     # ------------------------------------------------------------------ UI state
     def state(self, since_raw=0):
         raw = self.q("SELECT id, received_ms, ts_ms, host, type, raw, redacted, findings FROM raw_events "
@@ -661,9 +669,7 @@ def make_handler(col):
                 return self._send(200, {"collector_id": col.cid, "payloads": [list(r) for r in rows]})
             if self.path.startswith("/api/raw-search"):
                 term = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q", [""])[0]
-                n = col.q("SELECT COUNT(*) FROM raw_events WHERE raw LIKE ?", (f"%{term}%",))[0][0] if term else 0
-                m = col.q("SELECT COUNT(*) FROM egress WHERE body LIKE ?", (f"%{term}%",))[0][0] if term else 0
-                return self._send(200, {"term": term, "raw_matches_local": n, "egress_matches": m})
+                return self._send(200, col.search(term))
             self._send(404, {"error": "not found"})
 
         def do_POST(self):

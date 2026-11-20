@@ -30,8 +30,8 @@ sys.path.insert(0, ROOT)
 from common.policy import dlp_scan, load_policy, validate_inbound  # noqa: E402
 from common.tlsserver import TLSThreadingHTTPServer  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
-from common.util import CERT_DIR, CONFIG_DIR, DATA_DIR, dumps, iso, load_json, now_ms, parse_iso, save_json, \
-    sha256_hex, verify_sig  # noqa: E402
+from common.util import CERT_DIR, CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, \
+    save_json, sha256_hex, verify_sig  # noqa: E402
 from saas.aiops import ACTIONS, STATES, Engine  # noqa: E402
 from saas.store import Stores  # noqa: E402
 
@@ -285,6 +285,14 @@ class App:
                 "states": STATES, "policy_version": self.policy["policy_version"],
             }
 
+    def search_metadata(self, t, term):
+        """Count stored payloads / event contexts containing `term` (proof that a value never arrived)."""
+        st = self.stores.for_tenant(t)
+        pat = like_contains(term)
+        n = st.q1(r"SELECT COUNT(*) FROM payloads WHERE tenant_id=? AND body LIKE ? ESCAPE '\'", (t, pat))[0] if term else 0
+        e = st.q1(r"SELECT COUNT(*) FROM events WHERE tenant_id=? AND context LIKE ? ESCAPE '\'", (t, pat))[0] if term else 0
+        return {"term": term, "payload_matches": n, "event_matches": e}
+
     def act(self, user, aid, op):
         t = user["tenant_id"]
         st = self.stores.for_tenant(t)
@@ -489,10 +497,7 @@ class DashHandler(Base):
             rows[0]["analysis"] = json.loads(rows[0]["analysis"] or "{}")
             return self.send(200, rows[0])
         if path == "/api/search-metadata":
-            term = qs.get("q", [""])[0]
-            n = st.q1("SELECT COUNT(*) FROM payloads WHERE tenant_id=? AND body LIKE ?", (t, f"%{term}%"))[0] if term else 0
-            e = st.q1("SELECT COUNT(*) FROM events WHERE tenant_id=? AND context LIKE ?", (t, f"%{term}%"))[0] if term else 0
-            return self.send(200, {"term": term, "payload_matches": n, "event_matches": e})
+            return self.send(200, APP.search_metadata(t, qs.get("q", [""])[0]))
         self.send(404, {"error": "not found"})
 
     def do_POST(self):

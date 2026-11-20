@@ -15,7 +15,7 @@ The fix plan is in [plan.md](plan.md).
 | B2 | High | One malformed payload makes the whole batch fail, and the collector retries it forever | Reproduced | Fixed |
 | B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced | Open |
 | B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | Open |
-| B5 | High | Search on both proof panels treats `_` and `%` as wildcards and reports false leaks | Reproduced | Open |
+| B5 | Medium | Search on both proof panels treats `_` and `%` as wildcards and can report false leaks | Reproduced | Fixed |
 | B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced | Open |
 | B7 | Medium | No brute-force protection on dashboard login | Reproduced | Open |
 | B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced | Open |
@@ -111,20 +111,30 @@ alerts raised: 0
 **Impact:** a crashed process, a traffic black hole or a dead uplink often shows up as numbers
 *falling*. Unless the collector's reachability or service probe also fails, the platform stays green.
 
-## B5. Proof-panel search reports false leaks (High)
+## B5. Proof-panel search can report false leaks (Medium)
 
 **Where:** `collector/collector.py:638-639` and `saas/server.py:474-475` build `LIKE '%term%'`
 without escaping `%` and `_`.
 
 **Reproduced:**
 ```
-collector search '_' : raw_matches_local 4491, egress_matches 988
 collector search '%' : raw_matches_local 4491, egress_matches 988
 ```
+No payload contains a `%`, so all 988 outbound matches are false. `_` matches any single character, so
+`pay_oad_id` matched `payload_id`.
+
+**Correction (found while fixing):** the original report also quoted `'_' -> 988 egress matches` as
+evidence. That was wrong: every payload genuinely contains underscores (`payload_id`, `cpu_pct`), so
+most of those matches were real. Severity lowered from High to Medium: a false positive needs a `%`
+in the search term, or an `_` standing in for a character that differs.
 
 **Impact:** "Prove it stayed local" and "Search SaaS store" are the panels judges use to check for
-leaks. Any search term containing `_` (common in keys like `api_key` or `svc_app`) can report a match
-in outbound payloads when nothing leaked, which reads as a data-protection failure on stage.
+leaks. A false "found in outbound payloads" reads as a data-protection failure on stage.
+
+**Status: fixed** (commit "Fix B5"). Both searches escape `\`, `%` and `_` (`common.util.like_contains`)
+and use `LIKE ? ESCAPE '\'`. Tests: `tests/test_search.py` failed before and passes now. Same data,
+old query vs fixed query: `%` 1 -> 0, `pay_oad_id` 1 -> 0, `cpu_pct` 1 -> 1. Live re-run after
+restart: `%` -> 0 outbound matches, `payload_id` -> 11 (real).
 
 ## B6. Bandwidth-only sources show as "no data" (Medium)
 

@@ -88,3 +88,12 @@ def percentile(values, p):
     f = int(k)
     c = min(f + 1, len(v) - 1)
     return v[f] + (v[c] - v[f]) * (k - f)
+
+
+def like_contains(term):
+    r"""LIKE pattern that matches `term` literally; use it with ESCAPE '\'.
+
+    Without escaping, '_' and '%' act as wildcards and a proof-panel search reports matches that
+    are not there (bug B5)."""
+    esc = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{esc}%"
