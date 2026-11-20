@@ -41,7 +41,10 @@ REG_PATH = os.path.join(CONFIG_DIR, "registry.json")
 
 
 class App:
-    def __init__(self, reg=None, data_dir=None):
+    def __init__(self, reg=None, data_dir=None, reg_path=None):
+        # an App built from an in-memory registry (tests, benchmark) must never write the real
+        # config/registry.json: it saves config changes to reg_path, or nowhere
+        self.reg_path = reg_path or (None if reg else REG_PATH)
         self.reg = reg or load_json(REG_PATH)
         if not self.reg:
             sys.exit("config/registry.json missing - run setup_env.py first")
@@ -353,7 +356,8 @@ class App:
         for k, v in (data.get("health") or {}).items():
             if k in T["health"]:
                 T["health"][k] = max(5, int(v))
-        save_json(REG_PATH, self.reg)
+        if self.reg_path:
+            save_json(self.reg_path, self.reg)
         self.engine.audit(t, user["username"], "config_change", json.dumps({"thresholds": T["thresholds"],
                                                                             "threshold_modes": T.get("threshold_modes", {}),
                                                                             "health": T["health"]}))

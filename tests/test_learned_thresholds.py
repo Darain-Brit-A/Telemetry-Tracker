@@ -1,5 +1,6 @@
 """Learned (ML) health limits: per-source limits from the baseline, with the manual Poor value kept as a
 hard safety limit, and threshold alerts in learned mode only from that safety limit."""
+import os
 import random
 import unittest
 
@@ -85,6 +86,15 @@ class LearnedThresholds(unittest.TestCase):
         self.feed("db", self.steady(88))
         self.assertEqual(self.level("db", 88)[3], "learned")
         self.assertNotIn((CPU, "threshold"), self.open_alerts("db"))
+
+    def test_config_change_never_writes_the_real_registry(self):
+        """Regression: update_config on a test app used to overwrite config/registry.json."""
+        from saas import server
+        read = lambda: open(server.REG_PATH, "rb").read() if os.path.exists(server.REG_PATH) else None  # noqa: E731
+        before = read()
+        self.app.update_config({"username": "a", "role": "admin", "tenant_id": T}, {"threshold_modes": {CPU: "manual"}})
+        self.assertEqual(read(), before)
+        self.assertIsNone(self.app.reg_path)
 
     def test_config_api_validates_modes(self):
         admin = {"username": "a", "role": "admin", "tenant_id": T}
