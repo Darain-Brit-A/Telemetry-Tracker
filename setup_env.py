@@ -45,24 +45,28 @@ TENANTS = {
                                           ["db-01", "db", "billing-db"], ["fw-01", "network", "edge-firewall"]]},
         },
     },
-    # Real, live data: official air-quality monitors in Bengaluru (CPCB / KSPCB) read through the OpenAQ v3
-    # API by tools/openaq_poller.py. Not simulated. Region ap-south keeps Indian data in the Mumbai store.
+    # Real, live data: official air-quality monitors (CPCB and state boards) in four Indian cities, read through
+    # the OpenAQ v3 API by tools/openaq_poller.py. Not simulated. One collector per city, as one per site in a
+    # real deployment; region ap-south keeps Indian data in the Mumbai store.
     "cityair": {
-        "name": "Bengaluru Air Quality (live, OpenAQ)",
+        "name": "India Air Quality (live, OpenAQ)",
         "region": "ap-south",
         "dependencies": {},
         "live": "openaq",
-        "collectors": {
-            "col-air-blr": {"site": "blr-openaq", "tz": "Asia/Kolkata", "ui_port": 9104, "syslog_port": 5144,
-                            "simulated": False,
-                            # host, role, service (shown as the monitor's name), OpenAQ location id
-                            "hosts": [["silk-board", "air-monitor", "Silk Board", 6975],
-                                      ["btm-layout", "air-monitor", "BTM Layout", 5548],
-                                      ["peenya", "air-monitor", "Peenya", 5607],
-                                      ["jayanagar", "air-monitor", "Jayanagar 5th Block", 6973],
-                                      ["bapuji-nagar", "air-monitor", "Bapuji Nagar", 6974],
-                                      ["hebbal", "air-monitor", "Hebbal", 6984]]},
-        },
+        "collectors": {cid: {"site": site, "tz": "Asia/Kolkata", "ui_port": port, "syslog_port": port - 3960,
+                             "simulated": False,
+                             # host, role, service (shown as the monitor's name), OpenAQ location id
+                             "hosts": [[h, "air-monitor", name, loc] for h, name, loc in monitors]}
+                       for cid, site, port, monitors in (
+            ("col-air-blr", "Bengaluru", 9104, [("silk-board", "Silk Board", 6975), ("btm-layout", "BTM Layout", 5548),
+                                                ("peenya", "Peenya", 5607), ("hebbal", "Hebbal", 6984)]),
+            ("col-air-del", "Delhi", 9105, [("rk-puram", "R K Puram", 17), ("punjabi-bagh", "Punjabi Bagh", 50),
+                                            ("sirifort", "Sirifort", 5586), ("mandir-marg", "Mandir Marg", 6358)]),
+            ("col-air-bom", "Mumbai", 9106, [("powai", "Powai", 6956), ("mulund-west", "Mulund West", 12040),
+                                             ("worli", "Worli", 3409323), ("colaba", "Colaba", 6927)]),
+            ("col-air-maa", "Chennai", 9107, [("royapuram", "Royapuram", 11578), ("perungudi", "Perungudi", 12046),
+                                              ("kodungaiyur", "Kodungaiyur", 11579), ("arumbakkam", "Arumbakkam", 11581)]),
+        )},
     },
 }
 
@@ -90,8 +94,10 @@ AIR_THRESHOLDS = {
     "no2_ugm3": [40, 80, 180],
 }
 HEALTH_SETTINGS = {"stale_after_s": 10, "no_data_after_s": 30, "collector_offline_after_s": 30}
+# official monitors publish every 15-60 minutes, typically 1-2 hours late: stale after 3 h, no data after 6 h
+AIR_HEALTH_SETTINGS = {"stale_after_s": 10800, "no_data_after_s": 21600, "collector_offline_after_s": 30}
 
-SETUP_VERSION = 3          # bump when setup adds something existing configs need (run_all re-runs setup)
+SETUP_VERSION = 4          # bump when setup adds something existing configs need (run_all re-runs setup)
 SAAS_DASH_PORT = 8080
 SAAS_INGEST_PORT = 8443
 SIM_PORT = 9000
@@ -202,9 +208,16 @@ def main():
     sim = {"port": SIM_PORT, "collectors": {}}
 
     for tid, t in TENANTS.items():
+        thresholds = dict(AIR_THRESHOLDS if t.get("live") else DEFAULT_THRESHOLDS)
+        # Learned (ML) limits by default for every metric; a choice saved in the dashboard survives re-runs
+        old_modes = (old.get("tenants", {}).get(tid) or {}).get("threshold_modes") or {}
         registry["tenants"][tid] = {"name": t["name"], "region": t["region"], "dependencies": t["dependencies"],
-                                    "thresholds": dict(AIR_THRESHOLDS if t.get("live") else DEFAULT_THRESHOLDS),
-                                    "health": dict(HEALTH_SETTINGS)}
+                                    "thresholds": thresholds,
+                                    "threshold_modes": {m: old_modes.get(m, "learned") for m in thresholds},
+                                    "health": dict(AIR_HEALTH_SETTINGS if t.get("live") else HEALTH_SETTINGS)}
+        if t.get("live"):
+            # readings older than 3 h (the backfill) only train the baselines; they never raise alerts
+            registry["tenants"][tid]["history_after_s"] = 10800
         for cid, c in t["collectors"].items():
             secret = old_secrets.get(cid) or secrets.token_hex(32)
             registry["collectors"][cid] = {"tenant_id": tid, "secret": secret, "site": c["site"]}

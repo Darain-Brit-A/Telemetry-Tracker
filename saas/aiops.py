@@ -366,6 +366,9 @@ class Engine:
                 s.anomalous, s.onset = False, None
 
         akey = f"{sid}:{name}"
+        hist_s = self.T(t).get("history_after_s")
+        if hist_s and now_ms() - ts > hist_s * 1000:
+            return      # history (e.g. a live source's backfill): it trains the baseline but never alerts
         if s.anomalous and not thr_active and (z is None or z < Z_OPEN):
             return      # recovering: alert stays open until PERSIST normal windows; evidence keeps the peak
         if s.anomalous or thr_active:
@@ -407,8 +410,8 @@ class Engine:
     def threshold_level(self, t, name, s, value):
         """Health level and alerting level of `value` for one series.
 
-        Returns (health_level, alert_level, limits_shown, mode). In manual mode both levels come from
-        the tenant's fixed limits. In learned mode the health level comes from the series' own
+        Returns (health_level, alert_level, limits_shown, mode). Learned (ML) is the default. In manual
+        mode both levels come from the tenant's fixed limits. In learned mode the health level comes from the series' own
         baseline (s.learned), and only the manual Poor value can raise a threshold alert - deviations
         from the baseline are already alerted by the anomaly detector, with its persistence filter.
         Until a baseline exists, learned mode falls back to the manual limits.
@@ -418,7 +421,7 @@ class Engine:
         if not thr:
             return 0, 0, None, None
         manual = level_of(value, thr)
-        if (T.get("threshold_modes") or {}).get(name) != "learned":
+        if (T.get("threshold_modes") or {}).get(name, "learned") != "learned":     # Learned (ML) by default
             return manual, manual, thr, "manual"
         if s is None or s.learned is None:
             return manual, manual, thr, "manual (learning baseline)"
@@ -488,7 +491,11 @@ class Engine:
         st.bump(t, "noise", "alerts_raised")
         if kind not in ("collector", "stale"):
             replayed = self.replay_delay > 10_000
-            self.record_latency(t, "alert_replayed" if replayed else "alert", max(0, now - first_ms),
+            # sources that publish late (official air monitors) would turn the alert-latency SLO into a
+            # measure of the publisher's delay, so their alerts are recorded under their own kind
+            lk = ("alert_source_delayed" if self.T(t).get("history_after_s")
+                  else "alert_replayed" if replayed else "alert")
+            self.record_latency(t, lk, max(0, now - first_ms),
                                 f"{akey} ({kind}){' - from buffered data replayed after outage' if replayed else ''}")
         self.correlate(t, aid)
         return aid

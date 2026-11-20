@@ -17,7 +17,7 @@ class LearnedThresholds(unittest.TestCase):
         self.t0 = now_ms() - 600_000
 
     def learned(self, on=True):
-        self.app.reg["tenants"][T]["threshold_modes"] = {CPU: "learned"} if on else {}
+        self.app.reg["tenants"][T]["threshold_modes"] = {CPU: "learned" if on else "manual"}
 
     def feed(self, sid, values, start=0):
         for i, v in enumerate(values):
@@ -37,6 +37,7 @@ class LearnedThresholds(unittest.TestCase):
 
     def test_busy_but_normal_source_is_fair_manually_and_excellent_learned(self):
         # a database that always runs at ~88% CPU
+        self.learned(False)
         self.feed("db", self.steady(88))
         self.assertEqual(self.level("db", 88)[0], 2)                   # manual: Fair
         self.assertIn((CPU, "threshold"), self.open_alerts("db"))      # and a standing threshold alert
@@ -78,6 +79,12 @@ class LearnedThresholds(unittest.TestCase):
         lvl, alert, shown, mode = self.level("new", 88)
         self.assertEqual((lvl, alert, mode), (2, 2, "manual (learning baseline)"))
         self.assertEqual(shown, [60, 80, 92])
+
+    def test_learned_is_the_default(self):
+        self.app.reg["tenants"][T].pop("threshold_modes", None)
+        self.feed("db", self.steady(88))
+        self.assertEqual(self.level("db", 88)[3], "learned")
+        self.assertNotIn((CPU, "threshold"), self.open_alerts("db"))
 
     def test_config_api_validates_modes(self):
         admin = {"username": "a", "role": "admin", "tenant_id": T}

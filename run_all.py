@@ -65,9 +65,9 @@ def main():
         threading.Thread(target=pump, args=(name, p), daemon=True).start()
         time.sleep(0.8 if name == "saas" else 0.3)
     print("\n  SaaS dashboard : http://localhost:8080   (acme-admin / acme-admin-demo, globex-admin / globex-admin-demo)")
-    print("  Collector UIs  : http://127.0.0.1:9101 (acme dc1)  :9102 (acme cloud)  :9103 (globex nyc)  :9104 (air, live)")
+    print("  Collector UIs  : http://127.0.0.1:9101 (acme dc1)  :9102 (acme cloud)  :9103 (globex nyc)  :9104-9107 (air, live)")
     if any(n == "openaq" for n, _ in plan):
-        print("  Live air data  : cityair-admin / cityair-admin-demo  (Bengaluru monitors via OpenAQ)")
+        print("  Live air data  : cityair-admin / cityair-admin-demo  (16 monitors in Bengaluru, Delhi, Mumbai, Chennai via OpenAQ)")
     else:
         print("  Live air data  : off (set AIOPS_OPENAQ_API_KEY or create config/pollution.json)")
     print("  Baselines need ~40s of telemetry before anomaly detection is armed.  Ctrl+C to stop.\n")

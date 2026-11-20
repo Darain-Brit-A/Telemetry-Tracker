@@ -47,12 +47,14 @@ BENCH_T0_MS = 1_763_600_000_000          # 2025-11-20 00:53 UTC; any fixed insta
 NOISE_EXTRA = 1.6   # widen the simulator's noise so the benchmark is harder than the live demo
 MAGNITUDES = [0.3, 0.5, 0.75, 1.0]   # fraction of the full fault strength; small faults may be missed
 BLIP_RATE = 1 / 60  # chance per host per window of a harmless 1-2 window spike that must NOT alert
+THRESHOLD_MODE = "learned"   # the product default; --threshold-mode manual measures fixed limits instead
 
 
 def registry():
     return {"regions": REGIONS, "tls": False, "dashboard_port": 0, "ingest_port": 0, "users": {},
             "tenants": {"bench": {"name": "Bench", "region": "eu-west",
                                   "thresholds": {k: list(v) for k, v in DEFAULT_THRESHOLDS.items()},
+                                  "threshold_modes": {k: THRESHOLD_MODE for k in DEFAULT_THRESHOLDS},
                                   "health": dict(HEALTH_SETTINGS),
                                   "dependencies": {"checkout-web": ["checkout-api"], "checkout-api": ["orders-db"]}}},
             "collectors": {"col-bench": {"tenant_id": "bench", "secret": "x", "site": "lab"}}}
@@ -248,8 +250,12 @@ def main():
     ap.add_argument("--min-precision", type=float, help="exit 1 if precision falls below this (CI gate)")
     ap.add_argument("--min-recall", type=float, help="exit 1 if recall falls below this (CI gate)")
     ap.add_argument("--no-write", action="store_true", help="do not overwrite saas/benchmark.json and docs/BENCHMARK.md")
+    ap.add_argument("--threshold-mode", choices=("learned", "manual"), default="learned",
+                    help="health limits to measure: learned (ML, the default) or manual fixed limits")
     ap.add_argument("--seasonal", action="store_true", help="run the seasonal-baseline scenarios (ML feature 3) instead")
     args = ap.parse_args()
+    global THRESHOLD_MODE
+    THRESHOLD_MODE = args.threshold_mode
     if args.seasonal:
         run_seasonal(args.trials, args.seed, not args.no_write)
         return

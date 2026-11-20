@@ -170,7 +170,9 @@ class App:
             value = m["min"] if m["name"] in ("reachable", "svc_up") else m["avg"]
             self.engine.on_point(t, m["source_id"], m["name"], ts, value)
         if newest:
-            self.engine.record_latency(t, "ingest", recv - newest, cid)
+            # for late-publishing sources the event-time delay is the publisher's, not the pipeline's
+            self.engine.record_latency(t, "ingest_source_delayed" if self.reg["tenants"][t].get("history_after_s")
+                                       else "ingest", recv - newest, cid)
         for e in p.get("events", []):
             st.x("INSERT INTO events(tenant_id,collector_id,source_id,ts_ms,category,severity,count,context,fingerprint,"
                  "received_ms,payload_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -288,7 +290,7 @@ class App:
                 "server_time": iso(), "newest_event_ms": newest, "collectors": cols, "sources": sources,
                 "incidents": incidents, "alerts": alerts, "history": history, "slo": eng.slo(t),
                 "counters": counters, "audit": audit, "thresholds": T["thresholds"], "health_settings": T["health"],
-                "threshold_modes": {k: (T.get("threshold_modes") or {}).get(k, "manual") for k in T["thresholds"]},
+                "threshold_modes": {k: (T.get("threshold_modes") or {}).get(k, "learned") for k in T["thresholds"]},
                 "learned_limits": eng.learned_limits(t),
                 "states": STATES, "policy_version": self.policy["policy_version"],
             }
@@ -481,15 +483,41 @@ class DashHandler(Base):
             return self.send(200, APP.overview(u))
         if path == "/api/series":
             sid = qs.get("source", [""])[0]
-            minutes = min(int(qs.get("minutes", ["10"])[0]), 120)
-            rows = st.q("SELECT name, ts_ms, avg, max FROM metrics WHERE tenant_id=? AND source_id=? AND ts_ms>? "
-                        "ORDER BY ts_ms", (t, sid, now_ms() - minutes * 60_000))
+            minutes = min(int(qs.get("minutes", ["10"])[0]), 7 * 1440)
+            since = now_ms() - minutes * 60_000
+            if minutes <= 120:
+                rows = st.q("SELECT name, ts_ms, avg, max FROM metrics WHERE tenant_id=? AND source_id=? AND ts_ms>? "
+                            "ORDER BY ts_ms", (t, sid, since))
+            else:   # long windows: at most ~400 points per metric (averaged buckets)
+                bucket = max(60_000, minutes * 60_000 // 400)
+                rows = st.q("SELECT name, (ts_ms / ?) * ? AS b, AVG(avg), MAX(max) FROM metrics WHERE tenant_id=? "
+                            "AND source_id=? AND ts_ms>? GROUP BY name, b ORDER BY b", (bucket, bucket, t, sid, since))
             out = {}
             for name, ts, avg, mx in rows:
-                out.setdefault(name, []).append([ts, avg, mx])
+                out.setdefault(name, []).append([ts, round(avg, 2), mx])
             alerts = st.rows("SELECT signal, first_event_ms, resolved_ms, kind, severity FROM alerts WHERE tenant_id=? "
                              "AND source_id=? AND created_ms>?", (t, sid, now_ms() - minutes * 60_000))
             return self.send(200, {"source_id": sid, "series": out, "alerts": alerts})
+        if path == "/api/trends":
+            # one metric for every source of the tenant, bucketed, plus the per-site (city) average
+            name = qs.get("metric", ["cpu_pct"])[0]
+            if name not in APP.policy["metric_names"]:
+                return self.send(400, {"error": "unknown metric"})
+            minutes = max(5, min(int(qs.get("minutes", ["30"])[0]), 7 * 1440))
+            bucket = max(10_000, minutes * 60_000 // 200)
+            rows = st.q("SELECT m.source_id, s.service, s.site, (m.ts_ms / ?) * ? AS b, AVG(m.avg) FROM metrics m "
+                        "JOIN sources s ON s.tenant_id = m.tenant_id AND s.source_id = m.source_id "
+                        "WHERE m.tenant_id=? AND m.name=? AND m.ts_ms>? GROUP BY m.source_id, b ORDER BY b",
+                        (bucket, bucket, t, name, now_ms() - minutes * 60_000))
+            srcs, sites = {}, {}
+            for sid, service, site, b, v in rows:
+                srcs.setdefault(sid, {"source_id": sid, "service": service, "site": site, "points": []})["points"].append(
+                    [b, round(v, 2)])
+                sites.setdefault(site, {}).setdefault(b, []).append(v)
+            return self.send(200, {"metric": name, "minutes": minutes, "bucket_ms": bucket,
+                                   "sources": list(srcs.values()),
+                                   "sites": [{"site": k, "points": [[b, round(sum(v) / len(v), 2)] for b, v in sorted(pts.items())]}
+                                             for k, pts in sorted(sites.items())]})
         if path == "/api/payloads":
             kind = qs.get("kind", ["metrics"])[0]
             rows = st.rows("SELECT payload_id, collector_id, seq, kind, created_ms, received_ms, sha256, bytes, body, "
