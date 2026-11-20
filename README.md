@@ -78,10 +78,13 @@ one collector, `billing-app -> billing-db / edge-firewall`).
 
 | Target (guide Section 2) | Required | Measured |
 |---|---|---|
-| Collection to dashboard, 95th percentile | 10 s | see `docs/VALIDATION_REPORT.md` |
-| Threshold breach to alert | 15 s | see `docs/VALIDATION_REPORT.md` |
-| Collector offline detection | 60 s | ~30 s |
-| Backlog after outage | zero loss, zero duplicates | every sent ID stored once, no sequence gaps |
+| Collection to dashboard, 95th percentile | 10 s | 2.6 s |
+| Threshold breach to alert, 95th percentile | 15 s | 3.8 s |
+| Collector offline detection | 60 s | 30.0 s |
+| Backlog after outage | zero loss, zero duplicates | 482 sent, 482 stored, 0 gaps, drained in 0.6 s |
+
+All 16 end-to-end checks pass (`docs/VALIDATION_REPORT.md`), including a stream in an unknown
+format fed through the adapter.
 
 | Quality and scale | Result |
 |---|---|

@@ -6,9 +6,13 @@ Writes docs/VALIDATION_REPORT.md with measured (not claimed) numbers.
 import http.cookiejar
 import json
 import os
+import argparse
+import random
 import sqlite3
 import ssl
+import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -16,6 +20,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.util import CONFIG_DIR, DATA_DIR, iso, load_json, now_ms, sign  # noqa: E402
+from tools import stream_adapter  # noqa: E402
 
 DASH = "http://127.0.0.1:8080"
 SIM = "http://127.0.0.1:9000"
@@ -154,6 +159,43 @@ def main():
     else:
         record("Scenario: CPU deviates from baseline -> explained recommendation", False, "no alert within 40s")
 
+    settle(acme, (globex,))
+
+    # 3b. organizer-format stream through the adapter ----------------------------------------
+    # Foreign field names, epoch-ms timestamps, a cpu *ratio*, string booleans, and a host the
+    # collector has never seen. 50 s of normal data, then a sustained CPU fault.
+    t_start = now_ms()
+    recs = []
+    for i in range(75):
+        cpu = 0.31 + random.uniform(-0.02, 0.02) if i < 50 else 0.86
+        recs.append({"timestamp": t_start + i * 1000, "device": "edge-gw-7", "cpu_ratio": round(cpu, 3),
+                     "mem_used_pct": round(48 + random.uniform(-1, 1), 2), "rtt_ms": round(12 + random.uniform(-1, 1), 2),
+                     "link_up": "true", "note": "organizer-format record"})
+    cfg = load_json(os.path.join(CONFIG_DIR, "collectors", "col-globex-nyc.json"))
+    feeder = threading.Thread(target=stream_adapter.run, daemon=True, kwargs={
+        "records": recs, "ingest_url": f"http://127.0.0.1:{cfg['ui_port']}/ingest", "rebase": True})
+    feeder.start()
+    fault_at = t_start + 50_000
+
+    def foreign_alert():
+        for a in jget(DASH + "/api/overview", globex)["alerts"]:
+            if a["signal"] == "cpu_pct" and a["created_ms"] >= fault_at - 2000:
+                st = jget(COL["col-globex-nyc"] + "/api/state")
+                if any(p["host"] == "edge-gw-7" and p["source_id"] == a["source_id"] for p in st["pseudonyms"]):
+                    return a
+        return None
+    a, _ = wait_for(foreign_alert, 110, 1)
+    feeder.join(timeout=5)
+    if a:
+        inc, _ = wait_for(lambda: (lambda i: i if i["analysis"].get("recommendation") else None)(
+            jget(f"{DASH}/api/incident/{a['incident_id']}", globex)), 10)
+        record("Organizer-format stream (unknown schema) mapped, detected and explained",
+               bool(inc), f"75 foreign records (epoch-ms 'timestamp', 'device', 'cpu_ratio', 'link_up') via "
+               f"tools/stream_adapter.py; CPU fault alerted {(a['created_ms'] - fault_at) / 1000:.1f}s after it began; "
+               f"'{inc['analysis']['recommendation']['title']}'; host name reached SaaS: "
+               f"{jget(DASH + '/api/search-metadata?q=edge-gw-7', globex)['payload_matches']} payloads")
+    else:
+        record("Organizer-format stream (unknown schema) mapped, detected and explained", False, "no alert within 110s")
     settle(acme, (globex,))
     # 4. network latency rises -----------------------------------------------------------
     t = now_ms()
@@ -390,5 +432,34 @@ def write_report(started):
     print(f"\n{passed}/{len(RESULTS)} passed -> {path}")
 
 
+def spawn_and_run():
+    """--spawn: start the whole stack with fresh data, run the checks, stop the stack."""
+    proc = subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, "run_all.py"), "--fresh"], cwd=ROOT,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    try:
+        ok, _ = wait_for(lambda: all(_up(u) for u in (DASH + "/index.html", *[c + "/" for c in COL.values()])), 40)
+        if not ok:
+            sys.exit("stack did not come up within 40 s")
+        main()
+    finally:
+        if os.name == "nt":   # terminate() would orphan run_all's child servers on Windows
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            proc.terminate()
+        proc.wait(timeout=10)
+
+
+def _up(url):
+    try:
+        urllib.request.urlopen(url, timeout=1)
+        return True
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--spawn", action="store_true", help="start and stop the stack itself (fresh data)")
+    args = ap.parse_args()
+    spawn_and_run() if args.spawn else main()
+    sys.exit(0 if all(ok for _, ok, _ in RESULTS) else 1)
