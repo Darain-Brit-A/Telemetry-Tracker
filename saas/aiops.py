@@ -136,7 +136,7 @@ def deviation_sentence(dev):
 
 class Series:
     __slots__ = ("hist", "recent", "last_ts", "consec", "clear", "anomalous", "run_start", "onset", "z", "peak_z",
-                 "peak_v", "thr_consec")
+                 "peak_v", "thr_consec", "resid", "profile", "season_cache")
 
     def __init__(self):
         self.hist = collections.deque(maxlen=180)
@@ -148,6 +148,37 @@ class Series:
         self.z = None
         self.peak_z = 0.0
         self.peak_v = None
+        self.resid = collections.deque(maxlen=180)    # residuals vs the seasonal profile (normal data only)
+        self.profile = {}                             # hour slot -> {day index: deque of values}
+        self.season_cache = None                      # (slot, day, expected) - previous days never change
+
+
+SEASON_DAYS_KEPT = 7
+SEASON_SAMPLES_PER_DAY = 120
+
+
+def seasonal_expected(s, ts, day_ms, min_days):
+    """ML feature 3: what is normal for this hour of the day. One median per day for the slot, then the
+    median of the previous days' medians, so a fault today (or on any single day) cannot shift it.
+    Returns (slot, day, expected or None until min_days of history exist)."""
+    slot = int((ts % day_ms) // (day_ms / 24))
+    day = ts // day_ms
+    c = s.season_cache
+    if c is not None and c[0] == slot and c[1] == day:
+        return slot, day, c[2]
+    days = s.profile.get(slot, {})
+    medians = [statistics.median(v) for d, v in days.items() if d < day and v]
+    expected = statistics.median(medians[-SEASON_DAYS_KEPT:]) if len(medians) >= min_days else None
+    s.season_cache = (slot, day, expected)
+    return slot, day, expected
+
+
+def seasonal_learn(s, slot, day, value):
+    """Every value feeds the profile (the cross-day median is what protects it from faults); old days drop."""
+    days = s.profile.setdefault(slot, {})
+    days.setdefault(day, collections.deque(maxlen=SEASON_SAMPLES_PER_DAY)).append(value)
+    if len(days) > SEASON_DAYS_KEPT + 1:
+        del days[min(days)]
 
 
 def level_of(value, thr):
@@ -172,8 +203,23 @@ class Engine:
         self.open_keys = set()                 # (tenant, akey) of open alerts: skips DB lookups on the hot path
         self.benchmark = load_benchmark()      # measured detector quality, cited in confidence factors
         self.replay_delay = 0                  # set by ingest: how late the current payload arrived
+        # seasonal baseline (ML feature 3): a real 24 h day by default; AIOPS_DAY_S compresses it for demos
+        self.season_default = (int(float(os.environ.get("AIOPS_DAY_S", "86400")) * 1000),
+                               int(os.environ.get("AIOPS_SEASONAL_MIN_DAYS", "3")))
+        self._season = {}
 
     # ---------------------------------------------------------------- helpers
+    def season(self, t):
+        """(day length in ms, days of history needed) for a tenant; a tenant config can override both.
+        Cached per tenant and config object, because it is read for every metric point."""
+        cfg = self.T(t).get("seasonal") or {}
+        hit = self._season.get(t)
+        if hit and hit[0] is cfg:
+            return hit[1]
+        val = (int(cfg.get("day_ms", self.season_default[0])), int(cfg.get("min_days", self.season_default[1])))
+        self._season[t] = (cfg, val)
+        return val
+
     def T(self, t):
         return self.reg["tenants"][t]
 
@@ -249,11 +295,24 @@ class Engine:
         # alarms), so Poor needs 2 consecutive windows and Fair needs PERSIST - both well inside 15 s
         thr_active = (level == 3 and s.thr_consec >= 2) or (level >= 2 and s.thr_consec >= PERSIST)
 
-        z = med = mad = None
-        if meta and len(s.hist) >= MIN_BASELINE:
+        z = med = mad = expected = None
+        kind = "recent"
+        day_ms, min_days = self.season(t)
+        slot, day, expected = seasonal_expected(s, ts, day_ms, min_days) if meta else (None, None, None)
+        if meta and expected is not None and len(s.resid) >= MIN_BASELINE:
+            # seasonal: run the same robust detector on the residual from "normal for this hour"
+            r = value - expected
+            rmed = statistics.median(s.resid)
+            mad = statistics.median(abs(x - rmed) for x in s.resid)
+            z = (r - rmed) / max(1.4826 * mad, meta["floor"])
+            med = expected + rmed
+            kind = "seasonal"
+        elif meta and len(s.hist) >= MIN_BASELINE:
             med = statistics.median(s.hist)
             mad = statistics.median(abs(x - med) for x in s.hist)
             z = (value - med) / max(1.4826 * mad, meta["floor"])
+        if meta:
+            seasonal_learn(s, slot, day, value)
         s.z = z
         if z is not None and z >= Z_OPEN:
             if s.consec == 0:
@@ -266,6 +325,8 @@ class Engine:
                 s.clear += 1
             if not s.anomalous and (z is None or z < Z_LEARN):
                 s.hist.append(value)       # baseline learns from normal data only
+                if expected is not None:
+                    s.resid.append(value - expected)
         if not s.anomalous and s.consec >= PERSIST:
             s.anomalous, s.onset, s.peak_z, s.peak_v = True, s.run_start, 0.0, value
         if s.anomalous:
@@ -290,7 +351,8 @@ class Engine:
                       "z": None if z is None else round(z, 1), "peak_z": round(s.peak_z, 1),
                       "anomaly": s.anomalous, "threshold": thr_active, "level": STATES[level],
                       "threshold_values": thr, "trend_per_min": slope,
-                      "onset": iso(s.onset or ts)}
+                      "onset": iso(s.onset or ts), "baseline_kind": kind,
+                      "expected_for_hour": None if expected is None else round(expected, 2)}
             if thr_active and level == 3:
                 sev = "critical"
             elif thr_active or (z or 0) >= 8:
@@ -299,7 +361,12 @@ class Engine:
                 sev = "medium"
             if name == "bw_in_mbps":
                 sev = "low"
-            delta = "" if med is None else f" vs baseline {med:.1f}{unit}"
+            if med is None:
+                delta = ""
+            elif kind == "seasonal":
+                delta = f" vs {med:.1f}{unit} expected for this hour (seasonal)"
+            else:
+                delta = f" vs baseline {med:.1f}{unit}"
             why = "threshold" if thr_active and not s.anomalous else "anomaly" if not thr_active else "anomaly+threshold"
             title = f"{label} {value:.1f}{unit}{delta} ({why})"
             first = s.onset if s.anomalous else ts

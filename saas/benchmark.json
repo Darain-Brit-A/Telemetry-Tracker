@@ -58,5 +58,43 @@
     "cpu_pct": 7,
     "latency_ms": 2
   },
-  "method": "real engine, simulated telemetry with known fault windows, extra noise added (sigma x1.6 on cpu/latency/traffic); 150s warm-up, 60s fault, 60s recovery"
+  "method": "real engine, simulated telemetry with known fault windows, extra noise added (sigma x1.6 on cpu/latency/traffic); 150s warm-up, 60s fault, 60s recovery",
+  "seasonal": {
+    "generated_at": "2026-11-20T17:01:51.696Z",
+    "seed": 1,
+    "trials_per_cell": 20,
+    "runtime_s": 331.5,
+    "day_s": 240,
+    "learning_days": 3,
+    "results": {
+      "daily_peak|off": {
+        "trials": 20,
+        "false_alarms": 40,
+        "trials_with_false_alarm": 20,
+        "detected": null,
+        "explained_as_seasonal": null
+      },
+      "night_spike|off": {
+        "trials": 20,
+        "false_alarms": 30,
+        "trials_with_false_alarm": 20,
+        "detected": 20,
+        "explained_as_seasonal": 0
+      },
+      "daily_peak|on": {
+        "trials": 20,
+        "false_alarms": 1,
+        "trials_with_false_alarm": 1,
+        "detected": null,
+        "explained_as_seasonal": null
+      },
+      "night_spike|on": {
+        "trials": 20,
+        "false_alarms": 2,
+        "trials_with_false_alarm": 1,
+        "detected": 20,
+        "explained_as_seasonal": 20
+      }
+    }
+  }
 }

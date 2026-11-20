@@ -40,6 +40,22 @@ USERS = ["admin", "root", "oracle", "jdoe", "backup", "test", "svc_deploy", "pos
 ATTACK_IPS = ["203.0.113.7", "198.51.100.23"]
 LOCK = threading.Lock()
 INJECTIONS = []
+# Compressed day for the seasonal-baseline demo (ML feature 3): with AIOPS_DAY_S=600 a "day" lasts 10 minutes
+# and web/app/db hosts get a normal evening peak. Unset: no daily curve, exactly the old behaviour.
+DAY_S = float(os.environ["AIOPS_DAY_S"]) if os.environ.get("AIOPS_DAY_S") else None
+DAILY_PEAK = 28.0       # extra CPU % at the evening peak
+
+
+def daily_peak_factor(now, day_s):
+    """0..1 shape of the evening peak: ramps up 16-18 h, full 18-20 h, down 20-22 h (local "hour")."""
+    hour = (now % day_s) / day_s * 24
+    if hour < 16 or hour >= 22:
+        return 0.0
+    if hour < 18:
+        return (1 - math.cos((hour - 16) / 2 * math.pi)) / 2
+    if hour < 20:
+        return 1.0
+    return (1 + math.cos((hour - 20) / 2 * math.pi)) / 2
 
 
 class Host:
@@ -49,6 +65,7 @@ class Host:
         self.base = {k: v * random.uniform(0.9, 1.1) for k, v in p.items()}
         self.phase = random.uniform(0, 6.28)
         self.scn = {}     # name -> {start, until, root}
+        self.day_s = DAY_S if role in ("web", "app", "db") else None
 
     def active(self, name, now):
         s = self.scn.get(name)
@@ -66,6 +83,8 @@ class Host:
         lat = b["lat"] * (1 + 0.05 * math.sin(now / 60)) + random.gauss(0, max(1, b["lat"] * 0.08))
         loss = max(0.0, random.gauss(0.05, 0.04))
         reach, up = 1, 1
+        if self.day_s:
+            cpu += DAILY_PEAK * daily_peak_factor(now, self.day_s)
         for name in list(self.scn):
             s = self.active(name, now)
             if not s:
@@ -94,6 +113,8 @@ class Host:
                 cpu += 30 * ramp
                 bw += 170 * ramp
                 lat += 8 * ramp
+            elif name == "night_spike":
+                cpu += DAILY_PEAK * ramp      # the evening-peak level, but at whatever hour it is now
         clamp = lambda v, lo=0, hi=100: max(lo, min(hi, v))  # noqa: E731
         return {"cpu_pct": round(clamp(cpu), 2), "mem_pct": round(clamp(mem), 2), "disk_pct": round(clamp(disk), 2),
                 "bw_in_mbps": round(max(0, bw), 1), "bw_out_mbps": round(max(0, bw * 0.6), 1),
@@ -197,7 +218,7 @@ class Stream:
             return {"error": f"unknown collector {cid}"}
         target = self.host(cid, host) if host else None
         dur = duration or {"failed_logins": 25, "secret_in_log": 0, "mem_leak": 150, "disk_fill": 120,
-                           "source_silent": 60}.get(name, 120)
+                           "source_silent": 60, "night_spike": 60}.get(name, 120)
         info = {"name": name, "collector": cid, "host": host, "injected_at": iso(), "ms": now_ms()}
         if name == "heal":
             # only this collector's hosts: "Heal all" on one console must not end another tenant's

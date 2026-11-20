@@ -29,7 +29,15 @@ def pump(name, proc):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fresh", action="store_true", help="delete stored SaaS/collector data before starting")
+    ap.add_argument("--compressed-day", type=float, metavar="SECONDS",
+                    help="seasonal-baseline demo: a simulated day lasts this many seconds (e.g. 600)")
+    ap.add_argument("--seasonal-min-days", type=int, metavar="N",
+                    help="days of history before the seasonal baseline is used (default 3)")
     args = ap.parse_args()
+    if args.compressed_day:
+        os.environ["AIOPS_DAY_S"] = str(args.compressed_day)          # read by the SaaS engine and the simulator
+    if args.seasonal_min_days:
+        os.environ["AIOPS_SEASONAL_MIN_DAYS"] = str(args.seasonal_min_days)
     if not os.path.exists(os.path.join(ROOT, "config", "registry.json")):
         subprocess.run([PY, os.path.join(ROOT, "setup_env.py")], check=True)
     if args.fresh:
