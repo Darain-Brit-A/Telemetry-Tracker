@@ -1,6 +1,6 @@
 # Bugs
 
-Last updated 2026-11-20, after the Phase 1 fixes. **13 open, 8 fixed.**
+Last updated 2026-11-21. **12 open, 9 fixed.**
 
 Every bug marked **Reproduced** was triggered on the running system or in a test, and the result is
 quoted. **Code reading** means the cause is visible in the code but the bug was not triggered, usually
@@ -16,7 +16,6 @@ it fixed here with the commit hash.
 | ID | Severity | Bug | How found | Phase |
 |---|---|---|---|---|
 | B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | 2 |
-| B20 | Medium | Timezone handling silently falls back to UTC on machines without the `tzdata` package | Reproduced | 2 |
 | B7 | Medium | No brute-force protection on dashboard login | Reproduced | 2 |
 | B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced | 3 |
 | B10 | Medium | A remediation command can get stuck in "dispatched" forever | Code reading | 2 |
@@ -50,7 +49,7 @@ simulator and the benchmark.
 **Test:** traffic 120 to 0 Mbps for 10 s raises one alert with a "drop" explanation; the benchmark
 range across five seeds must not get worse than precision 94% / recall 92%.
 
-### B20. Timezone handling depends on an optional package (Medium)
+### B20. Timezone handling depends on an optional package (Medium) - FIXED, see the fixed table
 
 **Where:** `common/util.py`, `_zone()` uses `zoneinfo`, which on Windows has no system timezone
 database (`zoneinfo.TZPATH` is empty) and only works if the third-party `tzdata` package is installed.
@@ -246,3 +245,4 @@ and is reported.
 | B12 | Low | "Heal all" on one console healed every tenant's simulated faults | `ccdf2ee` | Heal is scoped to the requesting collector. `tests/test_simulator.py` |
 | B16 | Low | Validation report printed "render-ack p95 0.00s" with no samples | `c372be4` | Now says "not measured (no browser open)". `tests/test_verify_report.py` |
 | B19 | Medium | About 1 in 9,000 payloads was blocked by DLP because its UUID looked like a card number | `20e1a84` | Found by the end-to-end run (16/17). UUIDs are masked before scanning; real card numbers are still caught. Before: one lost window and a sequence gap; after: 17/17. Tests in `tests/test_policy.py` |
+| B20 | Medium | Offset-less timestamps were read as UTC on Python without a timezone database (stock Windows); this also failed the Windows CI jobs | this commit | `common/util.py` falls back to a built-in table with EU/US daylight-saving rules for the zones in use (checked hour by hour against the real database for 2025-2027) and warns once for an unknown zone. The whole suite passes with `zoneinfo` blocked. `tests/test_timezone_fallback.py` |

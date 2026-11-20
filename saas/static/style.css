@@ -893,8 +893,16 @@ ol.reason li { margin: 4px 0; color: var(--color-text-secondary); }
 }
 
 canvas { width: 100%; height: 50px; display: block; }
+.chart-lg { height: 240px; margin-top: 6px; border-radius: 10px; background: var(--color-surface-subtle); border: 1px solid var(--border-subtle); }
+.mon-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mon-head select { width: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; color: var(--color-text-muted); }
+.legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+.legend .lg i { width: 12px; height: 4px; border-radius: 2px; display: inline-block; }
+.legend .lg i.dash { height: 0; border-top: 2px dashed currentColor; background: none; }
+.charts .chart-note { margin-top: 4px; }
 .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
-.charts canvas { height: 124px; margin-top: 6px; border-radius: 10px; background: var(--color-surface-subtle); border: 1px solid var(--border-subtle); }
+.charts canvas { height: 170px; margin-top: 6px; border-radius: 10px; background: var(--color-surface-subtle); border: 1px solid var(--border-subtle); }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .thr { display: grid; grid-template-columns: 130px 128px repeat(3, 72px); gap: 8px; align-items: center; margin-bottom: 8px; }

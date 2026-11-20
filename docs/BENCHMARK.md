@@ -53,3 +53,17 @@ learning, then the measured day. `daily_peak`: any CPU alert on the measured day
 | `night_spike`: detected | 20 / 20 | 20 / 20 |
 | `night_spike`: explained against "expected for this hour" | 0 / 20 | 20 / 20 |
 | `night_spike`: other false alarms on the measured day | 30 | 2 |
+
+## Learned (ML) vs manual health limits
+
+Learned limits are the default since they were added. The same 60 trials (seed 7) were run with each mode
+(`tools/benchmark.py --trials 60 --seed 7 --threshold-mode learned|manual --no-write`):
+
+| Mode | Precision | Recall | False alarms per host-hour | Root cause correct | Detection delay median / p95 |
+|---|---|---|---|---|---|
+| Learned (ML), default | 95.3% | 94% | 0.50 | 90% | 3 s / 33 s |
+| Manual fixed limits | 94.1% | 94% | 0.64 | 90% | 3 s / 33 s |
+
+Learned mode drops the threshold alerts that fire on a source whose normal level is simply high (only the
+manual Poor value still alerts, as a safety limit), so it raises fewer false alarms and misses nothing the
+manual limits caught. The headline numbers at the top of this file were measured with manual limits.

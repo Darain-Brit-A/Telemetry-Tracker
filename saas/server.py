@@ -41,7 +41,10 @@ REG_PATH = os.path.join(CONFIG_DIR, "registry.json")
 
 
 class App:
-    def __init__(self, reg=None, data_dir=None):
+    def __init__(self, reg=None, data_dir=None, reg_path=None):
+        # an App built from an in-memory registry (tests, benchmark) must never write the real
+        # config/registry.json: it saves config changes to reg_path, or nowhere
+        self.reg_path = reg_path or (None if reg else REG_PATH)
         self.reg = reg or load_json(REG_PATH)
         if not self.reg:
             sys.exit("config/registry.json missing - run setup_env.py first")
@@ -52,9 +55,15 @@ class App:
         self.max_seq = {}
         self.ingest_port = self.reg["ingest_port"]
         self.scheme = "https" if self.reg.get("tls") else "http"
+        # Two-machine deployments: the ingest listener binds to a network interface (setup_env.py
+        # --saas-host sets 0.0.0.0) and collectors are told to reach it at the public host name / IP.
+        # The dashboard always stays on loopback.
+        self.ingest_bind = os.environ.get("AIOPS_INGEST_BIND") or self.reg.get("ingest_bind", "127.0.0.1")
+        self.public_host = os.environ.get("AIOPS_PUBLIC_HOST") or self.reg.get("ingest_public_host", "127.0.0.1")
 
     def ingest_url(self, region):
-        return f"{self.scheme}://127.0.0.1:{self.ingest_port}/r/{region}"
+        host = f"[{self.public_host}]" if ":" in self.public_host else self.public_host
+        return f"{self.scheme}://{host}:{self.ingest_port}/r/{region}"
 
     # ---------------------------------------------------------------- ingest
     def authenticate(self, h, body):
@@ -170,7 +179,9 @@ class App:
             value = m["min"] if m["name"] in ("reachable", "svc_up") else m["avg"]
             self.engine.on_point(t, m["source_id"], m["name"], ts, value)
         if newest:
-            self.engine.record_latency(t, "ingest", recv - newest, cid)
+            # for late-publishing sources the event-time delay is the publisher's, not the pipeline's
+            self.engine.record_latency(t, "ingest_source_delayed" if self.reg["tenants"][t].get("history_after_s")
+                                       else "ingest", recv - newest, cid)
         for e in p.get("events", []):
             st.x("INSERT INTO events(tenant_id,collector_id,source_id,ts_ms,category,severity,count,context,fingerprint,"
                  "received_ms,payload_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -255,7 +266,7 @@ class App:
                 latest = {n: {"ts": iso(v[0]), "value": round(v[1], 2)} for (tt, ss, n), v in eng.latest.items()
                           if tt == t and ss == sid}
                 spark = {}
-                for name in ("cpu_pct", "latency_ms", "mem_pct"):
+                for name in ("cpu_pct", "latency_ms", "mem_pct", "pm25_ugm3", "pm10_ugm3"):
                     spark[name] = [[r[0], round(r[1], 1)] for r in reversed(st.q(
                         "SELECT ts_ms, avg FROM metrics WHERE tenant_id=? AND source_id=? AND name=? "
                         "ORDER BY ts_ms DESC LIMIT 150", (t, sid, name)))]
@@ -288,7 +299,7 @@ class App:
                 "server_time": iso(), "newest_event_ms": newest, "collectors": cols, "sources": sources,
                 "incidents": incidents, "alerts": alerts, "history": history, "slo": eng.slo(t),
                 "counters": counters, "audit": audit, "thresholds": T["thresholds"], "health_settings": T["health"],
-                "threshold_modes": {k: (T.get("threshold_modes") or {}).get(k, "manual") for k in T["thresholds"]},
+                "threshold_modes": {k: (T.get("threshold_modes") or {}).get(k, "learned") for k in T["thresholds"]},
                 "learned_limits": eng.learned_limits(t),
                 "states": STATES, "policy_version": self.policy["policy_version"],
             }
@@ -351,7 +362,8 @@ class App:
         for k, v in (data.get("health") or {}).items():
             if k in T["health"]:
                 T["health"][k] = max(5, int(v))
-        save_json(REG_PATH, self.reg)
+        if self.reg_path:
+            save_json(self.reg_path, self.reg)
         self.engine.audit(t, user["username"], "config_change", json.dumps({"thresholds": T["thresholds"],
                                                                             "threshold_modes": T.get("threshold_modes", {}),
                                                                             "health": T["health"]}))
@@ -481,15 +493,41 @@ class DashHandler(Base):
             return self.send(200, APP.overview(u))
         if path == "/api/series":
             sid = qs.get("source", [""])[0]
-            minutes = min(int(qs.get("minutes", ["10"])[0]), 120)
-            rows = st.q("SELECT name, ts_ms, avg, max FROM metrics WHERE tenant_id=? AND source_id=? AND ts_ms>? "
-                        "ORDER BY ts_ms", (t, sid, now_ms() - minutes * 60_000))
+            minutes = min(int(qs.get("minutes", ["10"])[0]), 7 * 1440)
+            since = now_ms() - minutes * 60_000
+            if minutes <= 120:
+                rows = st.q("SELECT name, ts_ms, avg, max FROM metrics WHERE tenant_id=? AND source_id=? AND ts_ms>? "
+                            "ORDER BY ts_ms", (t, sid, since))
+            else:   # long windows: at most ~400 points per metric (averaged buckets)
+                bucket = max(60_000, minutes * 60_000 // 400)
+                rows = st.q("SELECT name, (ts_ms / ?) * ? AS b, AVG(avg), MAX(max) FROM metrics WHERE tenant_id=? "
+                            "AND source_id=? AND ts_ms>? GROUP BY name, b ORDER BY b", (bucket, bucket, t, sid, since))
             out = {}
             for name, ts, avg, mx in rows:
-                out.setdefault(name, []).append([ts, avg, mx])
+                out.setdefault(name, []).append([ts, round(avg, 2), mx])
             alerts = st.rows("SELECT signal, first_event_ms, resolved_ms, kind, severity FROM alerts WHERE tenant_id=? "
                              "AND source_id=? AND created_ms>?", (t, sid, now_ms() - minutes * 60_000))
             return self.send(200, {"source_id": sid, "series": out, "alerts": alerts})
+        if path == "/api/trends":
+            # one metric for every source of the tenant, bucketed, plus the per-site (city) average
+            name = qs.get("metric", ["cpu_pct"])[0]
+            if name not in APP.policy["metric_names"]:
+                return self.send(400, {"error": "unknown metric"})
+            minutes = max(5, min(int(qs.get("minutes", ["30"])[0]), 7 * 1440))
+            bucket = max(10_000, minutes * 60_000 // 200)
+            rows = st.q("SELECT m.source_id, s.service, s.site, (m.ts_ms / ?) * ? AS b, AVG(m.avg) FROM metrics m "
+                        "JOIN sources s ON s.tenant_id = m.tenant_id AND s.source_id = m.source_id "
+                        "WHERE m.tenant_id=? AND m.name=? AND m.ts_ms>? GROUP BY m.source_id, b ORDER BY b",
+                        (bucket, bucket, t, name, now_ms() - minutes * 60_000))
+            srcs, sites = {}, {}
+            for sid, service, site, b, v in rows:
+                srcs.setdefault(sid, {"source_id": sid, "service": service, "site": site, "points": []})["points"].append(
+                    [b, round(v, 2)])
+                sites.setdefault(site, {}).setdefault(b, []).append(v)
+            return self.send(200, {"metric": name, "minutes": minutes, "bucket_ms": bucket,
+                                   "sources": list(srcs.values()),
+                                   "sites": [{"site": k, "points": [[b, round(sum(v) / len(v), 2)] for b, v in sorted(pts.items())]}
+                                             for k, pts in sorted(sites.items())]})
         if path == "/api/payloads":
             kind = qs.get("kind", ["metrics"])[0]
             rows = st.rows("SELECT payload_id, collector_id, seq, kind, created_ms, received_ms, sha256, bytes, body, "
@@ -581,12 +619,13 @@ def main():
         ctx = server_context(os.path.join(CERT_DIR, "server.crt"), os.path.join(CERT_DIR, "server.key"),
                              os.path.join(CERT_DIR, "ca.crt") if APP.reg.get("mtls") else None)
         # handshake per connection thread, never in accept() (bug B1)
-        ingest = TLSThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler, ctx)
+        ingest = TLSThreadingHTTPServer((APP.ingest_bind, APP.ingest_port), IngestHandler, ctx)
     else:
-        ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
+        ingest = http.server.ThreadingHTTPServer((APP.ingest_bind, APP.ingest_port), IngestHandler)
     threading.Thread(target=ingest.serve_forever, daemon=True).start()
     dash = http.server.ThreadingHTTPServer(("127.0.0.1", APP.reg["dashboard_port"]), DashHandler)
-    print(f"[saas] ingest {APP.scheme}://127.0.0.1:{APP.ingest_port} (regions: {', '.join(APP.reg['regions'])})  "
+    print(f"[saas] ingest {APP.scheme}://{APP.public_host}:{APP.ingest_port} (listening on {APP.ingest_bind}; "
+          f"regions: {', '.join(APP.reg['regions'])})  "
           f"dashboard http://localhost:{APP.reg['dashboard_port']}", flush=True)
     try:
         dash.serve_forever()

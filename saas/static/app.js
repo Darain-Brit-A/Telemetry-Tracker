@@ -87,7 +87,172 @@ function render() {
   if (tab === 'settings') renderSettings();
 }
 
+// ------------------------------------------------------------------ monitoring charts
+const CPCB = {pm25_ugm3: [30, 60, 90, 120, 250], pm10_ugm3: [50, 100, 250, 350, 430], no2_ugm3: [40, 80, 180, 280, 400]};
+const CPCB_NAMES = ['Good', 'Satisfactory', 'Moderate', 'Poor', 'Very Poor', 'Severe'];
+const CPCB_COLORS = ['#16843D', '#65A30D', '#CA8A04', '#EA580C', '#DC2626', '#9F1239'];
+const SERIES_COLORS = ['#4263A3', '#D97706', '#16843D', '#9333EA', '#0891B2', '#DC2626', '#64748B', '#DB2777'];
+const LABELS = {pm25_ugm3: 'PM2.5', pm10_ugm3: 'PM10', no2_ugm3: 'NO2', cpu_pct: 'CPU', mem_pct: 'Memory', disk_pct: 'Disk',
+  latency_ms: 'Latency', packet_loss_pct: 'Packet loss', bw_in_mbps: 'Inbound traffic'};
+const UNITS = {pm25_ugm3: 'µg/m³', pm10_ugm3: 'µg/m³', no2_ugm3: 'µg/m³', cpu_pct: '%', mem_pct: '%', disk_pct: '%',
+  latency_ms: 'ms', packet_loss_pct: '%', bw_in_mbps: 'Mbps'};
+let trend = {key: null, at: 0, data: null};
+
+function cpcbIndex(metric, v) { const b = CPCB[metric] || []; const i = b.findIndex(x => v <= x); return i < 0 ? b.length : i; }
+function tenantIsAir() { return D.sources.some(isAir); }
+function niceStep(x) { const p = Math.pow(10, Math.floor(Math.log10(x || 1))); return [1, 2, 2.5, 5, 10].map(m => m * p).find(v => v >= x) || p * 10; }
+function fmtNum(v) { return Math.abs(v) >= 10 || v === 0 ? String(Math.round(v)) : v.toFixed(1); }
+function fmtAxisT(t, span) {
+  const mode = $('tzmode') ? $('tzmode').value : 'utc';
+  const opt = mode === 'utc' ? {timeZone: 'UTC'} : mode === 'src' && tenantIsAir() ? {timeZone: 'Asia/Kolkata'} : {};
+  const d = new Date(t);
+  return span > 36 * 3600e3
+    ? d.toLocaleString('en-GB', Object.assign({weekday: 'short', hour: '2-digit', hour12: false}, opt)) + 'h'
+    : d.toLocaleTimeString('en-GB', Object.assign({hour: '2-digit', minute: '2-digit', hour12: false}, opt));
+}
+
+// Line chart with a shared y scale, axes, time labels, dashed reference lines (bands) and alert shading.
+function drawChart(c, o) {
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  const muted = cssVar('--color-text-muted', '#65766C'), grid = cssVar('--border-subtle', '#E1EAE3');
+  const cErr = cssVar('--status-poor-dot', '#DC2626');
+  g.font = '11px system-ui, -apple-system, Segoe UI, sans-serif';
+  const pts = o.series.flatMap(s => s.pts || []);
+  if (!pts.length) { g.fillStyle = muted; g.fillText(o.empty || 'no data yet', 12, h / 2); return; }
+  const L = 46, R = 12, T = o.unit ? 22 : 10, B = 22;
+  const t0 = Math.min(...pts.map(p => p[0])), t1 = Math.max(...pts.map(p => p[0]));
+  const bands = (o.bands || []).filter(b => b.v != null);
+  let hi = Math.max(...pts.map(p => p[1]), ...bands.map(b => b.v)) * 1.08 || 1;
+  const step = niceStep(hi / 4); hi = Math.ceil(hi / step) * step;
+  const X = t => L + (w - L - R) * (t - t0) / Math.max(t1 - t0, 1);
+  const Y = v => T + (h - T - B) * (1 - Math.min(Math.max(v, 0), hi) / hi);
+  g.lineWidth = 1; g.strokeStyle = grid; g.fillStyle = muted; g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (let v = 0; v <= hi + 1e-9; v += step) {
+    g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(w - R, Y(v)); g.stroke(); g.fillText(fmtNum(v), L - 6, Y(v));
+  }
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  const ticks = w < 420 ? 2 : 4;
+  for (let i = 0; i <= ticks; i++) { const t = t0 + (t1 - t0) * i / ticks; g.fillText(fmtAxisT(t, t1 - t0), Math.min(Math.max(X(t), L + 18), w - R - 18), h - B + 6); }
+  if (o.unit) { g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(o.unit, 4, 2); }
+  (o.shade || []).forEach(([a, b]) => {
+    const x0 = X(Math.max(a, t0)), x1 = X(Math.min(b || t1, t1));
+    g.fillStyle = cErr; g.globalAlpha = 0.12; g.fillRect(x0, T, Math.max(2, x1 - x0), h - T - B); g.globalAlpha = 1;
+  });
+  const used = [];
+  bands.slice().sort((a, b) => b.v - a.v).forEach(b => {
+    g.setLineDash([5, 4]); g.strokeStyle = b.color; g.globalAlpha = 0.8; g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(L, Y(b.v)); g.lineTo(w - R, Y(b.v)); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+    // label inside the plot on the left, skipped when it would collide with the previous one
+    if (b.label && used.every(y => Math.abs(y - Y(b.v)) > 13)) {
+      used.push(Y(b.v)); g.fillStyle = b.color; g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillText(b.label, L + 4, Y(b.v) - 2);
+    }
+  });
+  o.series.forEach(s => {
+    const p = s.pts || []; if (!p.length) return;
+    g.strokeStyle = s.color; g.lineWidth = s.width || 2; g.lineJoin = 'round'; g.lineCap = 'round';
+    g.beginPath(); p.forEach((q, i) => i ? g.lineTo(X(q[0]), Y(q[1])) : g.moveTo(X(q[0]), Y(q[1]))); g.stroke();
+    const last = p[p.length - 1]; g.fillStyle = s.color; g.beginPath(); g.arc(X(last[0]), Y(last[1]), 3, 0, 7); g.fill();
+  });
+}
+
+// Horizontal bars grouped (e.g. monitors by city), coloured per row, with dashed vertical reference lines.
+function drawBars(c, groups, o) {
+  const rowH = 20, groupH = 22, n = groups.reduce((a, g) => a + g.rows.length, 0);
+  c.style.height = (n * rowH + groups.length * groupH + 34) + 'px';
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (!w || !h) return;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  const muted = cssVar('--color-text-muted', '#65766C'), text = cssVar('--color-text-primary', '#1F2A24'), grid = cssVar('--border-subtle', '#E1EAE3');
+  g.font = '11px system-ui, -apple-system, Segoe UI, sans-serif';
+  if (!n) { g.fillStyle = muted; g.fillText(o.empty || 'no data yet', 12, h / 2); return; }
+  const L = Math.min(150, w * 0.34), R = 44, T = 22;
+  const vals = groups.flatMap(gr => gr.rows.map(r => r.value));
+  let hi = Math.max(...vals, ...(o.bands || []).map(b => b.v)) * 1.05 || 1;
+  const step = niceStep(hi / 4); hi = Math.ceil(hi / step) * step;
+  const X = v => L + (w - L - R) * Math.min(v, hi) / hi;
+  const bottom = h - 12;
+  g.strokeStyle = grid; g.fillStyle = muted; g.textAlign = 'center'; g.textBaseline = 'bottom';
+  for (let v = 0; v <= hi + 1e-9; v += step) { g.beginPath(); g.moveTo(X(v), T); g.lineTo(X(v), bottom); g.stroke(); g.fillText(fmtNum(v), X(v), T - 4); }
+  (o.bands || []).forEach(b => {
+    g.setLineDash([5, 4]); g.strokeStyle = b.color; g.lineWidth = 1.2; g.beginPath(); g.moveTo(X(b.v), T); g.lineTo(X(b.v), bottom); g.stroke();
+    g.setLineDash([]); g.lineWidth = 1;
+  });
+  let y = T + 4;
+  groups.forEach(gr => {
+    g.fillStyle = text; g.font = '600 12px system-ui, -apple-system, Segoe UI, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.fillText(gr.name, 4, y + groupH / 2); y += groupH;
+    g.font = '11px system-ui, -apple-system, Segoe UI, sans-serif';
+    gr.rows.forEach(r => {
+      g.fillStyle = muted; g.textAlign = 'right'; g.fillText(r.label.length > 22 ? r.label.slice(0, 21) + '…' : r.label, L - 8, y + rowH / 2);
+      g.fillStyle = r.color; g.fillRect(L, y + 4, Math.max(2, X(r.value) - L), rowH - 8);
+      g.fillStyle = text; g.textAlign = 'left'; g.fillText(fmtNum(r.value), X(r.value) + 5, y + rowH / 2);
+      y += rowH;
+    });
+  });
+}
+
+function legend(items) {
+  return items.map(i => `<span class="lg"><i class="${i.dash ? 'dash' : ''}" style="${i.dash ? 'color' : 'background'}:${i.color}"></i>${esc(i.label)}</span>`).join('');
+}
+
+function monMetricOptions(air) {
+  const sel = $('mon-metric'), want = air ? ['pm25_ugm3', 'pm10_ugm3', 'no2_ugm3'] : ['cpu_pct', 'latency_ms', 'mem_pct', 'packet_loss_pct'];
+  if (sel.dataset.kind !== (air ? 'air' : 'host')) {
+    sel.innerHTML = want.map(m => `<option value="${m}">${LABELS[m]}</option>`).join('');
+    sel.dataset.kind = air ? 'air' : 'host';
+  }
+  return sel.value;
+}
+
+async function renderMonitoring() {
+  if (!D.sources.length) { $('monitoring').classList.add('hidden'); return; }
+  $('monitoring').classList.remove('hidden');
+  const air = tenantIsAir(), metric = monMetricOptions(air);
+  // A: air -> current value per monitor grouped by city, coloured by CPCB category; hosts -> CPU per service
+  if (air) {
+    const bySite = {};
+    D.sources.filter(isAir).forEach(s => {
+      const v = s.latest[metric]; if (!v) return;
+      (bySite[s.site] = bySite[s.site] || []).push({label: s.service, value: v.value, color: CPCB_COLORS[cpcbIndex(metric, v.value)]});
+    });
+    const groups = Object.keys(bySite).sort().map(k => ({name: k, rows: bySite[k].sort((a, b) => b.value - a.value)}));
+    $('mon-a-title').innerHTML = `${LABELS[metric]} now, by monitor <span class="sub">µg/m³, latest official reading; colour = India CPCB category</span>`;
+    drawBars($('mon-a'), groups, {bands: (CPCB[metric] || []).slice(0, 3).map((v, i) => ({v, color: CPCB_COLORS[i + 1]}))});
+    $('mon-a-legend').innerHTML = legend(CPCB_NAMES.map((n, i) => ({label: `${n}${CPCB[metric] && i < 5 ? ' ≤ ' + CPCB[metric][i] : ''}`, color: CPCB_COLORS[i]})));
+  }
+  // B: trend from /api/trends (per city for air, per source for hosts); refreshed every 60 s / 10 s
+  const minutes = air ? 4 * 1440 : 30, key = `${metric}:${minutes}`;
+  if (trend.key !== key || Date.now() - trend.at > (air ? 60000 : 10000)) {
+    trend = {key, at: Date.now(), data: trend.key === key ? trend.data : null};
+    trend.data = await api(`/api/trends?metric=${metric}&minutes=${minutes}`);
+  }
+  const td = trend.data; if (!td || !td.sources) return;
+  if (air) {
+    const series = td.sites.map((s, i) => ({pts: s.points, color: SERIES_COLORS[i % SERIES_COLORS.length], label: s.site}));
+    $('mon-b-title').innerHTML = `${LABELS[metric]} by city <span class="sub">last 4 days, average of each city's monitors</span>`;
+    const bands = (CPCB[metric] || []).slice(0, 3).map((v, i) => ({v, color: CPCB_COLORS[i + 1]}));
+    drawChart($('mon-b'), {series, unit: 'µg/m³', bands});
+    $('mon-b-legend').innerHTML = legend(series.map(s => ({label: s.label, color: s.color}))
+      .concat(bands.map((b, i) => ({label: `CPCB ${CPCB_NAMES[i]} limit (${b.v})`, color: b.color, dash: true}))));
+  } else {
+    const series = td.sources.map((s, i) => ({pts: s.points, color: SERIES_COLORS[i % SERIES_COLORS.length], label: `${s.service} (${s.source_id.slice(4, 9)})`, width: 1.6}));
+    const thr = D.thresholds[metric];
+    $('mon-a-title').innerHTML = `${LABELS[metric]} by source <span class="sub">last 30 minutes${thr ? '; dashed = safety limit' : ''}</span>`;
+    drawChart($('mon-a'), {series, unit: UNITS[metric], bands: thr ? [{v: thr[2], color: cssVar('--status-poor-dot', '#DC2626'), label: 'safety limit'}] : []});
+    $('mon-a-legend').innerHTML = legend(series.map(s => ({label: s.label, color: s.color})));
+    const bySite = td.sites.map((s, i) => ({pts: s.points, color: SERIES_COLORS[i % SERIES_COLORS.length], label: s.site}));
+    $('mon-b-title').innerHTML = `${LABELS[metric]} by site <span class="sub">average of each site's sources, last 30 minutes</span>`;
+    drawChart($('mon-b'), {series: bySite, unit: UNITS[metric]});
+    $('mon-b-legend').innerHTML = legend(bySite.map(s => ({label: s.label, color: s.color})));
+  }
+}
+
 function renderOps() {
+  renderMonitoring();
   const cnt = {Excellent: 0, Good: 0, Fair: 0, Poor: 0};
   D.sources.forEach(s => cnt[s.state]++); D.collectors.forEach(c => cnt[c.state]++);
   const openI = D.incidents.filter(i => i.status === 'open').length;
@@ -190,31 +355,67 @@ function renderFleet() {
     <td>${c.stats.seq_created ?? '–'} → ${c.received} <span class="small ${c.missing ? 'bad' : 'okc'}">${c.missing ? c.missing + ' missing' : 'no gaps'}</span></td></tr>`).join('')}</tbody></table>`;
   $('sources').innerHTML = D.sources.map(s => {
     const L = s.latest, v = k => L[k] ? L[k].value : '–';
+    const kv = isAir(s)
+      ? `<span>PM2.5 ${v('pm25_ugm3')}</span><span>PM10 ${v('pm10_ugm3')}</span><span>NO2 ${v('no2_ugm3')}</span><span>µg/m³</span><span title="time since the monitor measured (official monitors publish with a delay)">measured ${airAge(L)} ago</span>`
+      : `<span>CPU ${v('cpu_pct')}%</span><span>Mem ${v('mem_pct')}%</span><span>Disk ${v('disk_pct')}%</span><span>Lat ${v('latency_ms')}ms</span><span>Loss ${v('packet_loss_pct')}%</span><span>In ${v('bw_in_mbps')}Mb</span>`;
     return `<div class="src ${detailSrc === s.source_id ? 'is-selected' : ''}" tabindex="0" data-call="loadDetail" data-arg="${esc(s.source_id)}"><div class="src-head"><b>${esc(s.service)}</b>${pill(s.state || 'Unknown')}</div>
       <div class="small mono mut">${s.source_id} · ${esc(s.role)} · ${esc(s.site)}</div>
-      <div class="kv"><span>CPU ${v('cpu_pct')}%</span><span>Mem ${v('mem_pct')}%</span><span>Disk ${v('disk_pct')}%</span><span>Lat ${v('latency_ms')}ms</span><span>Loss ${v('packet_loss_pct')}%</span><span>In ${v('bw_in_mbps')}Mb</span></div>
+      <div class="kv">${kv}</div>
       <canvas data-spark="${s.source_id}"></canvas><div class="small mut">${esc(s.reason).slice(0, 110)}</div></div>`;
   }).join('');
   const primary = cssVar('--color-primary', '#4263A3'), secondary = cssVar('--status-fair-dot', '#D97706');
   document.querySelectorAll('canvas[data-spark]').forEach(c => {
     const s = D.sources.find(x => x.source_id === c.dataset.spark);
-    drawLines(c, [{pts: s.spark.cpu_pct, color: primary, max: 100}, {pts: s.spark.latency_ms, color: secondary}]);
+    drawLines(c, isAir(s) ? [{pts: s.spark.pm25_ugm3, color: primary}, {pts: s.spark.pm10_ugm3, color: secondary}]
+      : [{pts: s.spark.cpu_pct, color: primary, max: 100}, {pts: s.spark.latency_ms, color: secondary}]);
   });
 }
 
+function airAge(L) {
+  const ts = ['pm25_ugm3', 'pm10_ugm3', 'no2_ugm3'].map(k => L[k] && Date.parse(L[k].ts)).filter(Boolean);
+  if (!ts.length) return '–';
+  const m = Math.round((Date.now() - Math.max(...ts)) / 60000);
+  return m < 90 ? `${m} min` : `${(m / 60).toFixed(1)} h`;
+}
+// a live air-quality monitor (OpenAQ) reports pollutant concentrations instead of host metrics
+function isAir(s) { return !!(s && s.latest && (s.latest.pm25_ugm3 || s.latest.pm10_ugm3 || s.role === 'air-monitor')); }
+
+let detailCache = {sid: null, at: 0, r: null};
 async function loadDetail(sid, quiet) {
   detailSrc = sid;
-  const r = await api(`/api/series?source=${sid}&minutes=10`);
   const s = D.sources.find(x => x.source_id === sid) || {};
+  const air = isAir(s);
+  if (!quiet || detailCache.sid !== sid || Date.now() - detailCache.at > (air ? 30000 : 1000)) {
+    detailCache = {sid, at: Date.now(), r: await api(`/api/series?source=${sid}&minutes=${air ? 4 * 1440 : 10}`)};
+  }
+  const r = detailCache.r;
   $('detail').classList.remove('hidden');
   $('dtitle').innerHTML = `<span>${esc(s.service)} <span class="mono small mut">${sid}</span></span> <span>${pill(s.state || 'Unknown')} <span class="sub">${esc(s.reason)}</span></span>`;
-  const names = ['cpu_pct', 'mem_pct', 'disk_pct', 'latency_ms', 'packet_loss_pct', 'bw_in_mbps'];
-  if (!quiet || !$('dcharts').children.length) $('dcharts').innerHTML = names.map(n => `<div><div class="small"><b>${n}</b> <span class="mut">(event time; shaded = alert)</span></div><canvas id="ch-${n}"></canvas></div>`).join('');
-  const primary = cssVar('--color-primary', '#4263A3');
+  const names = isAir(s) ? ['pm25_ugm3', 'pm10_ugm3', 'no2_ugm3']
+    : ['cpu_pct', 'mem_pct', 'disk_pct', 'latency_ms', 'packet_loss_pct', 'bw_in_mbps'];
+  if (!quiet || $('dcharts').dataset.sid !== sid) {
+    $('dcharts').dataset.sid = sid;
+    $('dcharts').innerHTML = names.map(n => `<div><div class="small"><b>${LABELS[n] || n}</b> <span class="mut">${UNITS[n] || ''} · ${air ? 'last 4 days' : 'last 10 minutes'} · shaded = alert</span></div><canvas id="ch-${n}"></canvas><div class="small mut chart-note" id="cn-${n}"></div></div>`).join('');
+  }
+  const primary = cssVar('--color-primary', '#4263A3'), cOk = cssVar('--color-success', '#16843D'),
+    cWarn = cssVar('--status-fair-dot', '#D97706'), cErr = cssVar('--status-poor-dot', '#DC2626');
   names.forEach(n => {
     const pts = (r.series[n] || []).map(p => [p[0], p[1]]);
-    const thr = D.thresholds[n];
-    drawLines($('ch-' + n), [{pts, color: primary}], r.alerts.filter(a => a.signal === n), thr);
+    const thr = D.thresholds[n], mode = (D.threshold_modes || {})[n];
+    const lim = (((D.learned_limits || {})[n]) || []).find(x => x.source_id === sid);
+    let bands = [], note = '';
+    if (thr && mode === 'learned' && lim) {
+      bands = [{v: lim.limits[0], color: cOk, label: 'Excellent <'}, {v: lim.limits[1], color: cWarn, label: 'Good <'},
+               {v: lim.limits[2], color: cErr, label: 'Fair <'}, {v: thr[2], color: '#9F1239', label: 'safety limit'}];
+      note = `Learned (ML) limits for this ${air ? 'monitor' : 'source'}: ${lim.limits.join(' / ')} (its own baseline + 2σ / 4σ / 8σ: what is unusual here). ` +
+        `Safety limit ${thr[2]}${air ? ' (CPCB Moderate)' : ''}: at or above it the ${air ? 'air is rated Poor' : 'source is Poor'} whatever its history.`;
+    } else if (thr) {
+      bands = [{v: thr[0], color: cOk, label: 'Excellent <'}, {v: thr[1], color: cWarn, label: 'Good <'}, {v: thr[2], color: cErr, label: 'Fair <'}];
+      note = mode === 'learned' ? 'Learned (ML) limits appear once a baseline exists; manual limits apply until then.' : 'Manual limits.';
+    }
+    const shade = r.alerts.filter(a => a.signal === n).map(a => [a.first_event_ms, a.resolved_ms]);
+    drawChart($('ch-' + n), {series: [{pts, color: primary}], bands, shade, unit: UNITS[n] || ''});
+    const cn = $('cn-' + n); if (cn) cn.textContent = note;
   });
   document.querySelectorAll('.src').forEach(el => el.classList.toggle('is-selected', el.dataset.arg === sid));
   if (!quiet) $('detail').scrollIntoView({behavior: 'smooth'});
@@ -307,7 +508,7 @@ function thrRow(k, v, admin) {
   const now = ((D.learned_limits || {})[k] || []).slice(0, 4).map(x => `${esc(name(x.source_id))} ${x.limits.join('/')}`).join(' · ');
   const more = Math.max(0, ((D.learned_limits || {})[k] || []).length - 4);
   return `<div class="thr"><span>${k}</span>` +
-    `<select data-mode="${k}" ${admin ? '' : 'disabled'}><option value="manual" ${learned ? '' : 'selected'}>Manual</option><option value="learned" ${learned ? 'selected' : ''}>Learned (ML)</option></select>` +
+    `<select data-mode="${k}" ${admin ? '' : 'disabled'}><option value="manual" ${learned ? '' : 'selected'}>Manual</option><option value="learned" ${learned ? 'selected' : ''}>Learned (ML, default)</option></select>` +
     v.map((x, i) => `<input data-m="${k}" data-i="${i}" value="${x}" ${dis(i)} title="${learned && i === 2 ? 'safety limit: Poor at or above, whatever the baseline' : ''}">`).join('') + `</div>` +
     (learned ? `<div class="thr-learned small mut">${now ? `learned now: ${now}${more ? ` · +${more} more` : ''}` : 'learning baselines…'} · safety limit ${v[2]}</div>` : '');
 }
@@ -338,6 +539,7 @@ document.addEventListener('keydown', e => {
 });
 $('loginform').addEventListener('submit', doLogin);
 $('tzmode').addEventListener('change', () => render());
+$('mon-metric').addEventListener('change', () => { trend.at = 0; render(); });
 $('pkind').addEventListener('change', () => loadPayloads());
 document.addEventListener('input', e => { if (e.target.closest('#thr')) thrDirty = true; });
 // switching a metric's mode shows at once which inputs still apply (the save button stores it)

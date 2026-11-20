@@ -5,7 +5,7 @@
   "window_fields": ["start", "end"],
   "source_fields": ["source_id", "role", "service", "site", "tz"],
   "metric_fields": ["source_id", "ts", "name", "avg", "min", "max", "n"],
-  "metric_names": ["cpu_pct", "mem_pct", "disk_pct", "bw_in_mbps", "bw_out_mbps", "latency_ms", "packet_loss_pct", "reachable", "svc_up"],
+  "metric_names": ["cpu_pct", "mem_pct", "disk_pct", "bw_in_mbps", "bw_out_mbps", "latency_ms", "packet_loss_pct", "reachable", "svc_up", "pm25_ugm3", "pm10_ugm3", "no2_ugm3"],
   "event_fields": ["source_id", "ts", "category", "severity", "count", "context", "fingerprint"],
   "event_categories": [
     "security.auth_failure_burst",

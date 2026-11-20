@@ -34,6 +34,55 @@ Open:
 
 Wait about 30 s for baselines to arm, then inject scenarios from a collector console.
 
+## Two laptops: collector on one, SaaS on the other
+
+The collector and the SaaS can run on different machines on the same network; only the SaaS ingest port
+(8443, mutual TLS 1.3 + HMAC) is exposed. Full guide: [docs/TWO_MACHINES.md](docs/TWO_MACHINES.md).
+
+```powershell
+# laptop A (SaaS): use its LAN IP, open TCP 8443 in the firewall (admin), export the collector, start
+python setup_env.py --saas-host 192.168.1.20
+python tools/export_collector.py col-acme-dc1
+python run_all.py --exclude col-acme-dc1
+# laptop B (collector): unpack the zip into the project folder, then
+python run_all.py --collector col-acme-dc1
+```
+
+## Live data: air quality in four Indian cities (OpenAQ)
+
+Besides the simulated tenants, the demo monitors **real, live data**: 16 official air-quality monitors (CPCB
+and state pollution control boards) in **Bengaluru, Delhi, Mumbai and Chennai**, four per city, read through
+the [OpenAQ v3 API](https://docs.openaq.org/). Each city has its own Tier-1 collector, as each site would in
+a real deployment. Put your OpenAQ API key in `config/pollution.json` (`{"api_key": "..."}`; `config/` is
+git-ignored) or in the `AIOPS_OPENAQ_API_KEY` environment variable, then start the demo as usual;
+`run_all.py` starts `tools/openaq_poller.py` automatically when a key is present.
+
+```powershell
+python run_all.py --fresh
+```
+
+Sign in as `cityair-admin / cityair-admin-demo` (tenant "India Air Quality", stored in region ap-south).
+
+* **History first.** At start the poller sends each monitor's last 4 days of hourly PM2.5, PM10 and NO2 at
+  their real measurement times. The AI engine learns every monitor's own baseline (and, from 3 days of
+  history, its normal level for each hour of the day) from them. Readings older than 3 hours only train the
+  baselines; they never raise alerts.
+* **Then live.** Every 2 minutes it fetches the latest readings and sends each new measurement once, at its
+  real time. Official monitors publish every 15-60 minutes, usually 1-2 hours late, so cards show how old
+  each reading is, and a monitor with nothing for 3 hours turns stale instead of repeating an old value.
+* **Same secure path as all telemetry:** poller → collector `/ingest` (bearer token) → allow-list and DLP →
+  mutual TLS → SaaS → AI engine.
+* **Graphs.** Operations shows the current value of every monitor grouped by city and coloured by India's
+  CPCB category, and a 4-day trend per city with the CPCB limits; PM2.5 / PM10 / NO2 can be switched.
+  Each monitor's detail view charts 4 days with its learned limits drawn on.
+* **Limits.** Learned (ML) by default with the CPCB Moderate limit (PM2.5 90, PM10 250, NO2 180 µg/m³) as the
+  safety limit; switch any metric to Manual CPCB bands (PM2.5 30 / 60 / 90, PM10 50 / 100 / 250, NO2
+  40 / 80 / 180) under Thresholds & audit. Incidents name the CPCB category and whether the cause looks
+  regional (several monitors together) or local.
+
+`python tools/openaq_poller.py --once` discovers the monitors and prints the history it would send, without
+sending anything.
+
 ## Feeding the organizer stream
 
 `tools/stream_adapter.py` maps an unknown format onto the collector's input. It accepts JSON-lines,
@@ -70,7 +119,7 @@ before it was kept:
 | Entropy-assisted secret detection (collector) | Catches bare random tokens the regex patterns miss; add-only, never decides what leaves | 0 false positives on 14,000 ordinary IDs and lines; 95.5% of 10,000 secrets caught; 23.5 µs per line |
 | Deviation share (SaaS) | Shows each signal's share of an incident's total deviation, root and symptoms drawn separately | Shares always add up to 100%; the root group is always the ranked root |
 | Seasonal baseline (SaaS) | Compares each value with what is normal for that hour of the day once 3 days of history exist | Daily-peak false alarms in 20/20 trials without it, 1/20 with it; night spikes still caught 20/20 |
-| Learned health limits (SaaS, optional per metric) | **Thresholds & audit → Limits: Learned (ML)**. Each source's Excellent / Good / Fair limits come from its own baseline (+2σ / +4σ / +8σ, seasonal when available) instead of one fixed number for all; the manual Fair value stays as a hard safety limit, and only it raises threshold alerts (deviations are alerted by the anomaly detector) | Unit-tested: a database always at 88% CPU is Fair with a standing alert under manual limits, Excellent under learned; 95% still Poor and alerted. Default stays Manual, so the benchmark is unchanged |
+| Learned health limits (SaaS, **default**, Manual per metric optional) | **Thresholds & audit → Limits**. Each source's Excellent / Good / Fair limits come from its own baseline (+2σ / +4σ / +8σ, seasonal when available) instead of one fixed number for all; the manual Fair value stays as a hard safety limit, and only it raises threshold alerts (deviations are alerted by the anomaly detector) | Benchmark seed 7, 60 trials, learned vs manual: precision 95.3% vs 94.1%, false alarms 0.50 vs 0.64 per host-hour, recall 94% and detection delays identical. Unit-tested: a database always at 88% CPU is Fair with a standing alert under manual limits, Excellent under learned; 95% still Poor and alerted |
 
 Seasonal demo with a 10-minute day (the evening peak stops alerting after 3 compressed days; then use the
 collector console's **Night spike** button):

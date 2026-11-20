@@ -1,10 +1,12 @@
 """Small shared helpers: UTC time, request signing, JSON."""
+import functools
 import hashlib
 import hmac
 import json
 import os
+import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # overridable so tests and the load test can run fully isolated from the live demo
@@ -26,11 +28,87 @@ def iso(ms=None):
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{int(ms % 1000):03d}Z"
 
 
+def _nth_sunday(year, month, n):
+    """Date of the n-th Sunday of a month; n = -1 means the last one."""
+    if n > 0:
+        first = date(year, month, 1)
+        return first + timedelta(days=(6 - first.weekday()) % 7 + 7 * (n - 1))
+    nxt = date(year + month // 12, month % 12 + 1, 1)
+    last = nxt - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - 6) % 7)
+
+
+# Daylight-saving rules as (start month, n-th Sunday, local hour, end month, n-th Sunday, local hour);
+# the end hour is in summer time.
+_DST_RULES = {"eu": (3, -1, None, 10, -1, None),     # EU: 01:00 UTC on the last Sunday of Mar / Oct
+              "us": (3, 2, 2, 11, 1, 2)}             # US: 02:00 local, 2nd Sunday Mar / 1st Sunday Nov
+# Zones the demo and the adapter use, so offset-less timestamps are read correctly even where Python has no
+# timezone database (stock Windows without the `tzdata` package): name -> (standard, summer offset in min, rule)
+_BUILTIN_ZONES = {
+    "UTC": (0, None, None), "Etc/UTC": (0, None, None), "GMT": (0, None, None),
+    "Asia/Kolkata": (330, None, None), "Asia/Calcutta": (330, None, None), "Asia/Singapore": (480, None, None),
+    "Asia/Dubai": (240, None, None), "Asia/Tokyo": (540, None, None),
+    "Europe/London": (0, 60, "eu"), "Europe/Dublin": (0, 60, "eu"), "Europe/Berlin": (60, 120, "eu"),
+    "Europe/Paris": (60, 120, "eu"), "Europe/Amsterdam": (60, 120, "eu"), "Europe/Madrid": (60, 120, "eu"),
+    "America/New_York": (-300, -240, "us"), "America/Chicago": (-360, -300, "us"),
+    "America/Denver": (-420, -360, "us"), "America/Los_Angeles": (-480, -420, "us"),
+}
+
+
+class _RuleZone(tzinfo):
+    """Fixed offset plus an optional EU/US daylight-saving rule (wall-clock based)."""
+
+    def __init__(self, name, std, dst=None, rule=None):
+        self.name, self.std, self.dst_off, self.rule = name, timedelta(minutes=std), dst, rule
+
+    def _is_dst(self, dt):
+        if not self.rule or dt is None:
+            return False
+        sm, sn, sh, em, en, eh = _DST_RULES[self.rule]
+        if sh is None:                                   # EU: switch at 01:00 UTC
+            sh = 1 + self.std.total_seconds() / 3600
+            eh = 1 + self.dst_off / 60
+        wall = dt.replace(tzinfo=None)
+        start = datetime.combine(_nth_sunday(dt.year, sm, sn), datetime.min.time()) + timedelta(hours=sh)
+        end = datetime.combine(_nth_sunday(dt.year, em, en), datetime.min.time()) + timedelta(hours=eh)
+        return start <= wall < end
+
+    def utcoffset(self, dt):
+        return timedelta(minutes=self.dst_off) if self._is_dst(dt) else self.std
+
+    def dst(self, dt):
+        return self.utcoffset(dt) - self.std
+
+    def tzname(self, dt):
+        return self.name
+
+    def __repr__(self):
+        return f"_RuleZone({self.name!r})"
+
+
+_ZONE_WARNED = set()
+
+
+def builtin_zone(name):
+    z = _BUILTIN_ZONES.get(name)
+    return _RuleZone(name, *z) if z else None
+
+
+@functools.lru_cache(maxsize=64)
 def _zone(name):
+    """tzinfo for an IANA name: zoneinfo when this Python has a timezone database, else the built-in table
+    above; an unknown name falls back to UTC with a warning (once per name) instead of silently."""
     try:
         from zoneinfo import ZoneInfo
         return ZoneInfo(name)
-    except Exception:          # no tz database on this machine, or unknown name: fall back to UTC
+    except Exception:
+        z = builtin_zone(name)
+        if z:
+            return z
+        if name not in _ZONE_WARNED:
+            _ZONE_WARNED.add(name)
+            print(f"[warn] timezone {name!r} unknown on this machine (install 'tzdata' or add it to "
+                  f"common/util.py); reading offset-less timestamps from it as UTC", file=sys.stderr)
         return timezone.utc
 
 
