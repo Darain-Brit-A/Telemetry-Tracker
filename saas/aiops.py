@@ -16,6 +16,7 @@ Observe -> Detect -> Correlate -> Recommend -> (simulated, approved) Act
 """
 import collections
 import json
+import math
 import os
 import statistics
 import time
@@ -75,6 +76,62 @@ ACTIONS = {
     "data.check_agent": {"label": "Check the source's agent / exporter", "risk": "none", "reversible": True,
                          "automatable": False, "rollback": "n/a - manual check"},
 }
+
+
+def _round_to_100(values, ndigits=1):
+    """Round percentages so they add up to exactly 100 (largest-remainder method)."""
+    if not values:
+        return []
+    scale = 10 ** ndigits
+    raw = [v * scale for v in values]
+    floors = [int(r) for r in raw]
+    short = round(100 * scale - sum(floors))
+    order = sorted(range(len(raw)), key=lambda i: raw[i] - floors[i], reverse=True)
+    for i in order[:max(0, short)]:
+        floors[i] += 1
+    return [f / scale for f in floors]
+
+
+def deviation_shares(sig, root_source):
+    """ML feature 2: how much each (source, signal) deviated, as a share of the incident's total deviation.
+
+    Shares are computed per source and signal (not per metric name, which would let a symptom seen on
+    many hosts look like the cause), split into the root group and symptoms, and labelled honestly:
+    size of deviation is not cause. Event signals have no z-score and are listed separately."""
+    rows, events = [], []
+    for s in sig:
+        d = s.get("detail") or {}
+        z = max(abs(d.get("z") or 0), abs(d.get("peak_z") or 0))
+        key = s.get("source_id") or s.get("collector_id")
+        if not z:
+            events.append({"source": key, "service": s.get("service"), "signal": s.get("signal")})
+            continue
+        rows.append({"source": key, "service": s.get("service"), "signal": s.get("signal"), "z": round(z, 1)})
+    total = sum(r["z"] for r in rows)
+    for r, share in zip(rows, _round_to_100([r["z"] / total * 100 for r in rows] if total else [])):
+        r["share"] = share
+    root = sorted([r for r in rows if r["source"] == root_source], key=lambda r: -r["share"])
+    symptoms = sorted([r for r in rows if r["source"] != root_source], key=lambda r: -r["share"])
+    return {"composite_score": round(math.sqrt(sum(r["z"] ** 2 for r in rows)), 1), "root": root,
+            "symptoms": symptoms, "events": events,
+            "note": "share of total deviation; the root is chosen by onset time and dependency position, "
+                    "not by deviation size"}
+
+
+def deviation_sentence(dev):
+    if not dev["root"] and not dev["symptoms"]:
+        return None
+    root_pct = round(sum(r["share"] for r in dev["root"]))
+    lead = dev["root"][0] if dev["root"] else None
+    root_txt = (f"the root is {lead['service']} ({root_pct}%, led by {lead['signal']} at z = {lead['z']})"
+                if lead else "the root has no z-scored signal")
+    if not dev["symptoms"]:
+        return f"Deviation share: all z-scored deviation is on the root; {root_txt}."
+    sym_pct = round(sum(r["share"] for r in dev["symptoms"]))
+    top = ", ".join(f"{r['signal']} on {r['service']}" for r in dev["symptoms"][:3])
+    return (f"Deviation share: symptoms carry {sym_pct}% of the total deviation ({top}); {root_txt}, chosen "
+            f"by onset time and dependency position rather than deviation size "
+            f"(composite score {dev['composite_score']}).")
 
 
 class Series:
@@ -692,9 +749,13 @@ class Engine:
                 factors.append(f"measured detector quality ({b['trials']} labelled trials, tools/benchmark.py): "
                                f"precision {b['precision']:.0%}, recall {b['recall']:.0%}, "
                                f"{b['false_alarms_per_host_hour']} false alarms per host-hour")
+            dev = deviation_shares(sig, root["source"])
+            line = deviation_sentence(dev)
+            if line:
+                steps.append(line)
             r = {"title": title, "likely_cause": cause, "confidence": conf(base), "confidence_factors": factors,
                  "reasoning": steps, "action": a, "alternatives": alternatives or [],
-                 "root_source": root["source"], "root_service": root["service"]}
+                 "root_source": root["source"], "root_service": root["service"], "deviation": dev}
             if severity_override:
                 r["severity_override"] = severity_override
             return r

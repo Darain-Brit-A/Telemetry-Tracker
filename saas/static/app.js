@@ -111,6 +111,18 @@ function renderOps() {
 
 function srcTz(sid) { const s = D.sources.find(x => x.source_id === sid); return s && s.tz; }
 
+// ML feature 2: share of total deviation per (source, signal), root and symptoms drawn separately.
+function deviationHtml(dev) {
+  if (!dev || !(dev.root.length + dev.symptoms.length)) return '';
+  const bar = (r, cls) => `<div class="dev-row"><span class="dev-label">${esc(r.service)} · ${esc(r.signal)}</span>
+    <span class="dev-track"><span class="dev-bar ${cls}" style="width:${Math.max(1, r.share)}%"></span></span>
+    <span class="dev-val">${r.share.toFixed(1)}% <span class="mut small">z ${r.z}</span></span></div>`;
+  const ev = dev.events.length ? `<div class="small mut">Event signals (no z-score, not in the shares): ${dev.events.map(e => esc(e.signal)).join(', ')}</div>` : '';
+  return `<h3>Share of total deviation <span class="small mut">(composite score ${dev.composite_score})</span></h3>
+    <div class="dev">${dev.root.map(r => bar(r, 'root')).join('')}${dev.symptoms.map(r => bar(r, 'sym')).join('')}</div>
+    <div class="small mut">Darker bars: root (${esc(dev.root[0] ? dev.root[0].service : 'n/a')}). Lighter bars: symptoms. Size of deviation is not cause; the root is chosen by onset time and dependency position.</div>${ev}`;
+}
+
 function incidentHtml(i) {
   const a = i.analysis || {}, r = a.recommendation || {}, open = openInc.has(i.id);
   const conf = Math.round((r.confidence || 0) * 100);
@@ -130,6 +142,7 @@ function incidentHtml(i) {
       <h3>Likely cause</h3><p>${esc(r.likely_cause)}</p>
       <h3>Why it was flagged: contributing signals</h3>
       <div class="scroll"><table><thead><tr><th>Role</th><th>Source</th><th>Signal</th><th>Value</th><th>Baseline (median ± spread)</th><th>z</th><th>Onset</th><th>Status</th></tr></thead><tbody>${sigRows}</tbody></table></div>
+      ${deviationHtml(r.deviation)}
       <h3>Reasoning path</h3><ol class="reason">${(r.reasoning || []).map(x => `<li>${esc(x)}</li>`).join('')}</ol>
       <h3>Confidence ${conf}%</h3><ul class="small">${(r.confidence_factors || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
       ${rank && (a.ranking || []).length > 1 ? `<h3>Root-cause ranking</h3><table>${rank}</table>` : ''}
