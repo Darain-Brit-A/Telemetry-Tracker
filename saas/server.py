@@ -55,9 +55,15 @@ class App:
         self.max_seq = {}
         self.ingest_port = self.reg["ingest_port"]
         self.scheme = "https" if self.reg.get("tls") else "http"
+        # Two-machine deployments: the ingest listener binds to a network interface (setup_env.py
+        # --saas-host sets 0.0.0.0) and collectors are told to reach it at the public host name / IP.
+        # The dashboard always stays on loopback.
+        self.ingest_bind = os.environ.get("AIOPS_INGEST_BIND") or self.reg.get("ingest_bind", "127.0.0.1")
+        self.public_host = os.environ.get("AIOPS_PUBLIC_HOST") or self.reg.get("ingest_public_host", "127.0.0.1")
 
     def ingest_url(self, region):
-        return f"{self.scheme}://127.0.0.1:{self.ingest_port}/r/{region}"
+        host = f"[{self.public_host}]" if ":" in self.public_host else self.public_host
+        return f"{self.scheme}://{host}:{self.ingest_port}/r/{region}"
 
     # ---------------------------------------------------------------- ingest
     def authenticate(self, h, body):
@@ -613,12 +619,13 @@ def main():
         ctx = server_context(os.path.join(CERT_DIR, "server.crt"), os.path.join(CERT_DIR, "server.key"),
                              os.path.join(CERT_DIR, "ca.crt") if APP.reg.get("mtls") else None)
         # handshake per connection thread, never in accept() (bug B1)
-        ingest = TLSThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler, ctx)
+        ingest = TLSThreadingHTTPServer((APP.ingest_bind, APP.ingest_port), IngestHandler, ctx)
     else:
-        ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
+        ingest = http.server.ThreadingHTTPServer((APP.ingest_bind, APP.ingest_port), IngestHandler)
     threading.Thread(target=ingest.serve_forever, daemon=True).start()
     dash = http.server.ThreadingHTTPServer(("127.0.0.1", APP.reg["dashboard_port"]), DashHandler)
-    print(f"[saas] ingest {APP.scheme}://127.0.0.1:{APP.ingest_port} (regions: {', '.join(APP.reg['regions'])})  "
+    print(f"[saas] ingest {APP.scheme}://{APP.public_host}:{APP.ingest_port} (listening on {APP.ingest_bind}; "
+          f"regions: {', '.join(APP.reg['regions'])})  "
           f"dashboard http://localhost:{APP.reg['dashboard_port']}", flush=True)
     try:
         dash.serve_forever()

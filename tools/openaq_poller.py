@@ -235,11 +235,15 @@ def main():
     ap.add_argument("--poll", type=int, default=120, help="seconds between rounds of latest readings (default 120)")
     ap.add_argument("--history-days", type=int, default=4, help="days of hourly history sent at start (default 4)")
     ap.add_argument("--once", action="store_true", help="discover and print one round, send nothing")
+    ap.add_argument("--collectors", help="comma-separated collector ids to feed (default: every air collector)")
     args = ap.parse_args()
     key = api_key()
     if not key:
         sys.exit("[openaq] no API key: set AIOPS_OPENAQ_API_KEY or create config/pollution.json")
     configs = air_configs()
+    if args.collectors:
+        keep = set(args.collectors.split(","))
+        configs = [c for c in configs if c["collector_id"] in keep]
     if not configs:
         sys.exit("[openaq] no collector with openaq_locations (run setup_env.py)")
     p = Poller(configs, key, args.poll, args.history_days)

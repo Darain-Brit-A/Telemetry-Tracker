@@ -34,6 +34,20 @@ Open:
 
 Wait about 30 s for baselines to arm, then inject scenarios from a collector console.
 
+## Two laptops: collector on one, SaaS on the other
+
+The collector and the SaaS can run on different machines on the same network; only the SaaS ingest port
+(8443, mutual TLS 1.3 + HMAC) is exposed. Full guide: [docs/TWO_MACHINES.md](docs/TWO_MACHINES.md).
+
+```powershell
+# laptop A (SaaS): use its LAN IP, open TCP 8443 in the firewall (admin), export the collector, start
+python setup_env.py --saas-host 192.168.1.20
+python tools/export_collector.py col-acme-dc1
+python run_all.py --exclude col-acme-dc1
+# laptop B (collector): unpack the zip into the project folder, then
+python run_all.py --collector col-acme-dc1
+```
+
 ## Live data: air quality in four Indian cities (OpenAQ)
 
 Besides the simulated tenants, the demo monitors **real, live data**: 16 official air-quality monitors (CPCB
