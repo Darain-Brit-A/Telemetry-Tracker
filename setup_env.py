@@ -79,6 +79,9 @@ SERVER_EXT = ("subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FA
 CLIENT_EXT = ("basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n"
               "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
 CLIENT_DIR = os.path.join(CERT_DIR, "collectors")
+# The CA signing key is only needed here, to issue certificates. It is kept out of config/certs, which
+# the SaaS and collectors read; in a real deployment it lives in a managed PKI on neither tier.
+CA_KEY_DIR = os.environ.get("AIOPS_CA_KEY_DIR", os.path.join(CONFIG_DIR, "ca-private"))
 
 
 def client_cert_paths(cid):
@@ -89,7 +92,20 @@ def make_certs(force, collector_ids):
     """Returns (tls, mtls). Existing certificates are kept unless `force`; missing client
     certificates are issued from the existing CA."""
     os.makedirs(CLIENT_DIR, exist_ok=True)
-    ca_crt, ca_key = os.path.join(CERT_DIR, "ca.crt"), os.path.join(CERT_DIR, "ca.key")
+    os.makedirs(CA_KEY_DIR, exist_ok=True)
+    ca_crt, ca_key = os.path.join(CERT_DIR, "ca.crt"), os.path.join(CA_KEY_DIR, "ca.key")
+    ca_srl = os.path.join(CA_KEY_DIR, "ca.srl")
+    for name in ("ca.key", "ca.srl"):          # older setups kept these next to the certificates
+        old = os.path.join(CERT_DIR, name)
+        if os.path.exists(old):
+            new = os.path.join(CA_KEY_DIR, name)
+            if os.path.exists(new):
+                os.remove(old)
+            else:
+                shutil.move(old, new)
+                print(f"   moved {name} out of config/certs into {os.path.relpath(CA_KEY_DIR, CONFIG_DIR)}/")
+    if os.path.exists(os.path.join(CERT_DIR, "server.csr")):
+        os.remove(os.path.join(CERT_DIR, "server.csr"))
     have_ca = os.path.exists(ca_crt) and not force
     missing = [c for c in collector_ids if force or not os.path.exists(client_cert_paths(c)[0])]
     if have_ca and not missing:
@@ -112,14 +128,15 @@ def make_certs(force, collector_ids):
         return path
 
     if not have_ca:
-        run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.crt",
+        run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", ca_key, "-out", "ca.crt",
             "-days", "365", "-subj", "/CN=AIOps Demo Root CA",
             "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
             "-addext", "subjectKeyIdentifier=hash")
         run("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr",
             "-subj", "/CN=localhost")
-        run("x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", ca_key, "-CAcreateserial",
-            "-out", "server.crt", "-days", "365", "-extfile", ext_file("san.ext", SERVER_EXT))
+        run("x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", ca_key, "-CAserial", ca_srl,
+            "-CAcreateserial", "-out", "server.crt", "-days", "365", "-extfile", ext_file("san.ext", SERVER_EXT))
+        os.remove(os.path.join(CERT_DIR, "server.csr"))
         print("   TLS: private CA + server certificate created in config/certs")
     if not os.path.exists(ca_key):
         print("!! CA private key not found - cannot issue client certificates; mutual TLS disabled.")
@@ -129,8 +146,8 @@ def make_certs(force, collector_ids):
         crt, key = client_cert_paths(cid)
         csr = os.path.join(CLIENT_DIR, f"{cid}.csr")
         run("req", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", csr, "-subj", f"/CN={cid}")
-        run("x509", "-req", "-in", csr, "-CA", "ca.crt", "-CAkey", ca_key, "-CAcreateserial",
-            "-out", crt, "-days", "365", "-extfile", client_ext)
+        run("x509", "-req", "-in", csr, "-CA", "ca.crt", "-CAkey", ca_key, "-CAserial", ca_srl,
+            "-CAcreateserial", "-out", crt, "-days", "365", "-extfile", client_ext)
         os.remove(csr)
     print(f"   mTLS: {len(missing)} collector client certificate(s) issued in config/certs/collectors")
     return True, True
