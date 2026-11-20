@@ -1,62 +1,98 @@
 # Securing Telemetry-Tracker from host to SaaS
 
-Telemetry-Tracker now requires **TLS 1.3 with mutual certificate authentication** for collector-to-SaaS traffic. Each collector verifies the SaaS hostname and certificate before sending telemetry. The SaaS uses the collector's verified certificate to identify its tenant and permitted region.
+This document describes what the code in this repository **actually does** to protect telemetry on its way
+from a customer host to the SaaS, what it does not do yet, and what a real deployment would add. Every
+"implemented" claim below names the file that implements it.
 
-The SaaS decrypts the approved metadata to calculate health and incidents. A compromised SaaS process could read that metadata. A compromised customer host could read events before encryption. No cipher can guarantee 100% or lifelong security across those endpoints. For any value that even the SaaS operator must never see, compute the result on the collector and keep the original on the customer's host. For example, send the failed-login count and the number of distinct accounts. Keep the usernames and IP addresses local.
+In short: collectors talk to the SaaS over **TLS (1.2 or newer) pinned to a private CA**, every request is
+**signed with a per-collector HMAC-SHA256 key** bound to one tenant, and only **allow-listed metadata** ever
+leaves the host. Raw logs stay on the customer's machine.
+
+## What no cipher can fix
+
+The SaaS has to read the metadata it receives in order to calculate health and incidents, so a compromised
+SaaS process could read that metadata. A compromised customer host could read events before anything is
+filtered or encrypted. Encryption protects the path between the two, not the endpoints.
+
+For any value that even the SaaS operator must never see, compute the result on the collector and keep the
+original on the customer's host. That is the design here: the collector sends counts, rates and template
+fingerprints, and keeps usernames, IP addresses and raw log lines local.
 
 ## What each part of the path protects
 
 | Path | Implemented protection | Who can read the data |
 | --- | --- | --- |
-| Host process to local collector | In deployed mode the collector accepts authenticated JSON on loopback. The raw-data console, UDP input and simulated command polling are disabled. | The producer and collector see raw events. Local HTTP relies on the host's OS isolation. Keep both processes on the same machine. |
-| Collector to SaaS | A direct TLS 1.3 connection goes to the configured HTTPS origin. Discovery selects a region on that origin. The client rejects redirects and destinations outside the origin. Ingest requires a trusted and enrolled client certificate. | Network observers can see connection timing, sizes and endpoints. The authenticated endpoints can read the permitted metadata. |
-| Inside the collector | The collector aggregates metrics, assigns keyed identifiers to hosts and log templates, builds events from allowed fields and checks outgoing metric batches for recognizable secrets immediately before sending. | Raw events and the key for generating those identifiers stay local. Service and site labels explicitly configured for export are visible to the SaaS. |
-| Inside the SaaS | Ingest checks the payload policy and region, enforces collector ownership of existing sources and deduplicates retries. A failed authentication leaves queued metric batches pending. | The ingest service and authorized tenant users can access the metadata their roles allow. SQLite files, journals and backups require separate storage protection. |
+| Host process to local collector | The collector listens on **loopback only** (`127.0.0.1`): HTTP `/ingest` for JSON events and UDP for syslog. The HTTP console rejects foreign `Host` headers (DNS rebinding) and cross-site writes (`Origin` check). `collector/collector.py` | The producer and the collector see raw events. There is **no token** on the local `/ingest`; it relies on the host's OS isolation, so keep both processes on the same machine. |
+| Inside the collector | Raw events are stored locally (`data/`). Before anything is sent, events are reduced to allow-listed fields (`common/data_policy.json`), host names become keyed pseudonyms (HMAC-SHA256 with a per-collector salt), log lines become template fingerprints, secrets are redacted (regex rules plus the entropy check), and every outgoing payload gets a DLP scan. If the scan finds anything, the payload's metrics, events and sources are emptied and only that empty marker is sent, so sequence numbers stay continuous. `common/policy.py`, `collector/collector.py` | Raw events and the pseudonym salt stay on the host. Service and site labels that the policy allows are visible to the SaaS. |
+| Collector to SaaS | HTTPS to the ingest port. The collector trusts **only the private CA** in its `ca_file` and checks the server's hostname (`ssl.create_default_context(cafile=...)`). The server requires **TLS 1.2 or newer** (`saas/server.py`). Every request carries `X-Collector-Id`, `X-Timestamp` and `X-Signature`: an HMAC-SHA256 over the timestamp, method, path and SHA-256 of the body, using a 256-bit secret unique to that collector. `common/util.py` | Network observers see connection timing, sizes and endpoints, but not content. The SaaS can read the permitted metadata. |
+| Inside the SaaS | Rejects unknown collectors and bad signatures; rejects timestamps more than **5 minutes** off (replay window). The collector's tenant comes from its enrolment, not from the payload. Data residency: a request for the wrong region gets `421` with the correct region. The payload is checked again against the allow-list and DLP scan, de-duplicated by `payload_id` (a reused ID with a different body gets `409`), and acknowledged with a SHA-256 digest of the stored bytes. The collector keeps the payload in its outbox until the digest matches. `saas/server.py` | The ingest service and the tenant's authorised users, within their roles. SQLite files, journals and backups are **not encrypted** by the application. |
+| SaaS dashboard | Loopback only (`127.0.0.1:8080`), PBKDF2-SHA256 password hashes (120,000 rounds), per-tenant roles, strict Content-Security-Policy, `Host` and `Origin` checks. `saas/server.py`, `common/web.py` | Authorised tenant users. |
 
-TLS negotiates authenticated encryption for each session. With a full ephemeral key exchange, stealing the server's certificate key later does not by itself reveal past session traffic. The application disables TLS session tickets at ingress. Filtering at the host also reduces what a later SaaS compromise could expose. [TLS 1.3 specification](https://www.rfc-editor.org/info/rfc9846/)
+TLS encrypts and authenticates each session. With the ephemeral key exchange that modern TLS uses, stealing
+the server's certificate key later does not by itself reveal past traffic ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)).
+Filtering on the host also limits what a later SaaS compromise could expose.
 
 ## Run the secured localhost demo
 
-From the repository root on the tested Windows machine, run the following in PowerShell. Port 18443 worked in the load test. Windows denied the bind on the default port 8443 during validation.
-
 ```powershell
-$env:AIOPS_INGEST_PORT = "18443"
-py -3.13 setup_env.py
-py -3.13 run_all.py
+python setup_env.py
+python run_all.py
 ```
 
-Open the demo dashboard at [localhost:8080](http://localhost:8080). Demo setup creates a local certificate authority and separate collector certificates. The demo intentionally enables local inspection of raw telemetry and uses published demo accounts. Use the deployment settings below for customer data.
+`setup_env.py` uses `openssl` to create a private CA and a server certificate for `localhost` / `127.0.0.1`,
+and enrols each collector with its own random HMAC secret and pseudonym salt. If `openssl` is not on the
+`PATH`, it prints a warning and the demo runs **without TLS** (HMAC signing still applies).
 
-## Deploy a real collector
+Open the dashboard at [localhost:8080](http://localhost:8080). The demo intentionally shows raw local
+telemetry in the collector consoles and uses published demo accounts; it is not a production configuration.
 
-1. **Provision identities.** Generate a private key on each collector and issue a short-lived certificate with the `clientAuth` purpose through your managed PKI. Give the SaaS listener a `serverAuth` certificate whose subject alternative name matches its ingest DNS name. Keep the CA signing key outside both application tiers. This implementation loads PEM keys from files, so restrict each private key to its service account.
-2. **Configure the SaaS.** Set `ingest_bind`, `ingest_port` and `ingest_origin` in the registry. For example, the origin could be `https://ingest.example.com:8443`. Under `AIOPS_CERT_DIR`, install the server chain as `server.crt`, its key as `server.key`, and the trusted client CA bundle as `ca.crt`. Enroll each collector under its tenant with a `cert_fingerprints` list containing the lowercase, colon-free SHA-256 digest of its DER leaf certificate. Set `demo` to `false`. For ingest-only service, omit `dashboard_port`. Keep any enabled dashboard on loopback behind authenticated operator access. A load balancer on the ingest path must pass TLS through to the listener.
-3. **Configure the host.** Set the collector's `saas_url`, `ca_file`, `client_cert`, `client_key`, unique random `pseudonym_salt`, and `demo: false`. Give the collector and its authorized local producer the same randomly generated `AIOPS_LOCAL_INGEST_TOKEN` through their secret environments. The producer sends `Authorization: Bearer <token>` to the loopback `/ingest` endpoint. Review any site and service labels before approving their export.
-4. **Protect retained data.** Place the collector and SaaS data directories, SQLite journals and backups on encrypted storage. Restrict filesystem and backup access to the required identities. Choose retention periods for raw events and SaaS metadata, and verify deletion and backup expiry. Transport encryption ends when the receiving service decrypts a batch.
-5. **Start the services separately.** Start `python saas/server.py` on the SaaS machine and `python collector/collector.py --config <collector-config.json>` on the customer machine. Feed a synthetic event, verify its receipt and tenant assignment, and confirm the raw test value is absent from the exported payload. Monitor certificate expiry, outbox depth, disk space, rejected payloads and delivery latency. Protect a network-accessible ingress with connection limits and traffic controls sized for the deployment.
+## Not implemented yet
 
-**Rotation and incident response.** Enroll a replacement fingerprint alongside the existing one and restart the SaaS. Install the new key and certificate on the collector, restart it, and verify delivery. Then remove the old fingerprint and restart ingress. For suspected theft, disable the affected collector in the registry and restart ingress immediately. Revoke the certificate through the issuing PKI and investigate the host before re-enrollment. The running service reads registry changes at startup.
+These are reasonable next steps, but **none of them is in the code today**:
 
-## Evidence from the workspace
+| Gap | Why it matters | What it would take |
+| --- | --- | --- |
+| TLS 1.3 only | Removes older cipher suites and renegotiation | One line: `ctx.minimum_version = ssl.TLSVersion.TLSv1_3` in `saas/server.py`, plus a test |
+| Mutual TLS (client certificates) | Collector identity would no longer depend only on a shared HMAC secret; a stolen secret alone could not be used without the private key | `setup_env.py` issues a `clientAuth` certificate per collector; the server sets `CERT_REQUIRED` and maps the certificate fingerprint to the enrolled collector |
+| Token on the local `/ingest` | Another local user or process could currently feed events to the collector | A random token in the producer's and collector's environment, checked on every local request |
+| Redirect refusal | The collector uses `urllib`, which follows redirects (TLS and the pinned CA still apply to the target) | A custom redirect handler that refuses all 3xx responses |
+| Keyed log-template fingerprints | Template fingerprints are a plain SHA-256 prefix, so someone who guesses a template can confirm it | Use the pseudonym salt (HMAC) for fingerprints too |
+| Encryption at rest | SQLite files, journals and backups are plain files | Encrypted disks or volumes on both tiers |
+| CA key separation | In the demo, the CA private key sits in `config/certs/` next to the certificates | Keep the CA key in a managed PKI outside both tiers |
 
-All **63 automated tests passed** on Windows with Python 3.13. The final run completed in 8.137 seconds.
+## Deploying for real (guidance)
 
-| Check | Observed result |
-| --- | --- |
-| Certificate and transport enforcement | Live localhost tests negotiated TLS 1.3 and rejected a missing client certificate, an unenrolled certificate, a wrong server hostname and a TLS 1.2 client. |
-| Tenant isolation and recovery | The tests rejected delivery to the wrong region and writes to another collector's existing source. Disabling a collector left a metric batch queued. After re-enabling it, the batch arrived and replay produced one stored payload. |
-| Disclosure of a synthetic secret | The deployed-mode test submitted a raw log containing a synthetic password. It found the password locally. The SaaS received the security event, and its payload contained zero matches for the password, raw hostname or source-supplied service label. |
-| Load over mTLS | In separate 10-second localhost runs, 25 collectors submitted 250 payloads and 100 collectors submitted 852. Every submitted payload was accepted and stored once. The 100-collector run measured 71.1 payloads/s and 3.01 s p95 request latency. Use deployment hardware and real traffic distributions for a capacity commitment. |
+1. **Certificates.** Replace the demo CA with your managed PKI. Give the SaaS a certificate whose subject
+   alternative name matches its ingest DNS name, keep the CA signing key outside both tiers, and restrict
+   each private key file to its service account.
+2. **Secrets.** Each collector's HMAC `secret` and `pseudonym_salt` are generated by `setup_env.py`.
+   Keep them in the collector's secret store, never in source control. To rotate a secret, run
+   `setup_env.py --force` (or replace it in the registry and the collector config) and restart both.
+3. **Storage.** Put collector and SaaS data directories, SQLite journals and backups on encrypted storage,
+   restrict access to the required identities, and choose retention periods for raw events and metadata.
+4. **Exposure.** The ingest and dashboard listeners bind to `127.0.0.1`. To expose ingest, put it behind
+   a TLS-terminating or pass-through load balancer with connection limits; keep the dashboard behind
+   authenticated operator access.
+5. **Incident response.** For a suspected stolen collector secret, remove that collector from the registry
+   and restart the SaaS; its requests then fail with `401` while its payloads wait in the outbox. Re-enrol
+   it with a new secret after investigating the host.
 
-Run these commands to repeat the suite and load checks.
+## Evidence from this repository
 
-```powershell
-py -3.13 -m unittest discover -s tests -t tests
-py -3.13 tools/loadtest.py --collectors 25 100 --seconds 10 --no-write
-```
+| Check | How to run it | Result |
+| --- | --- | --- |
+| Unit tests (signing, policy, DLP, entropy secret detection, TLS server, idempotency) | `python -m unittest discover -s tests -t tests` | 72 tests, all pass |
+| End-to-end validation, including a forged signature (`401`), wrong region (`421`), tenant isolation and a raw secret in a log | `python tools/verify.py --spawn` | 17 of 17 checks pass (`docs/VALIDATION_REPORT.md`) |
 
-These checks exercised local processes and synthetic telemetry. The longer demo verification also observed zero SaaS matches for its synthetic secret and attacker IP. Its final result was unconfirmed after the interruption. Production network configuration, disk encryption, backup permissions and an independent security assessment remain deployment work.
+No automated test checks the 5-minute replay window yet; the check exists in `common/util.py` (`verify_sig`).
+| Load over real TLS and HMAC | `python tools/loadtest.py --collectors 25 100 200 --seconds 20` | 100 collectors: 93.7 payloads/s, 0 errors, 0 lost (`docs/LOADTEST.md`) |
+
+These checks run local processes with synthetic telemetry. Production network configuration, disk
+encryption, backup permissions and an independent security review remain deployment work.
 
 ## Long-term confidentiality
 
-If recorded traffic must stay confidential for many years, require and verify a hybrid TLS key exchange such as `X25519MLKEM768` on both deployed endpoints. The repository currently enforces TLS 1.3 and certificate authentication. Its tests do not require or demonstrate negotiation of that hybrid group. Maintain an inventory of TLS runtimes, certificates and data retention periods so algorithms and keys can be replaced during the system's lifetime. [IETF hybrid TLS key exchange](https://datatracker.ietf.org/doc/html/rfc10024) · [NIST guidance on cryptographic agility](https://csrc.nist.gov/pubs/cswp/39/upd1/considerations-for-achieving-crypto-agility/final)
+If recorded traffic must stay confidential for many years, plan to require a hybrid post-quantum TLS key
+exchange (for example `X25519MLKEM768`) on both endpoints once the Python and OpenSSL versions in use
+support it. The repository does not do this today. Keep an inventory of TLS runtimes, certificates and data
+retention periods so algorithms and keys can be replaced over the system's lifetime.
