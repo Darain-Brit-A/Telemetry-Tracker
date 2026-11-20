@@ -76,8 +76,8 @@ per-collector sequence numbers for gap detection, and event-time merge of metric
 ID with *different* content is rejected with 409 and audited, and the collector only marks a payload
 delivered when the SaaS echoes the SHA-256 of the exact bytes it sent.
 
-**How would you scale?** Measured first: one process handles about 107 payloads/s (3,900 points/s),
-which is roughly 100 collectors at p95 ~1 s with zero loss (`tools/loadtest.py`, docs/LOADTEST.md).
+**How would you scale?** Measured first: one process handles about 90-107 payloads/s (3,300-3,900
+points/s, depending on machine load), which is roughly 100 collectors with zero loss (`tools/loadtest.py`, docs/LOADTEST.md).
 Beyond that, partition by region, then tenant, then source: stateless ingest behind regional load
 balancers, Kafka per region, a time-series store, and AIOps workers sharded by series (the detector
 is per series). See ARCHITECTURE §8.
@@ -85,7 +85,8 @@ is per series). See ARCHITECTURE §8.
 **Where does the confidence percentage come from?** Two parts, both shown on screen. The rule-based
 factors (pattern base, corroborating signals, deviation strength, persistence, dependency position)
 are a transparent heuristic. Next to them is the measured detector quality from 60 labelled trials
-with extra noise and 800+ harmless blips: precision 95%, recall 96%, 0.5 false alarms per host-hour
+with extra noise and 800+ harmless blips, repeated on 5 seeds: precision 94-97%, recall 92-100%,
+0.3-0.6 false alarms per host-hour
 (`tools/benchmark.py`, docs/BENCHMARK.md). We say plainly that the benchmark uses our own simulator.
 
 **Will it work with our stream?** `tools/stream_adapter.py` maps unknown field names, nested or

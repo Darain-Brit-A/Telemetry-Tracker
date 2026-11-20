@@ -371,6 +371,22 @@ def main():
         badcode = 200
     except urllib.error.HTTPError as e:
         badcode = e.code
+    # B1 regression: an idle TCP client on the TLS port must not block other collectors
+    import socket
+    idle = socket.create_connection(("127.0.0.1", 8443))
+    time.sleep(0.3)
+    t_b1 = time.time()
+    try:
+        urllib.request.urlopen(bad, context=ctx, timeout=5)
+    except urllib.error.HTTPError:
+        pass
+    except Exception:
+        t_b1 = None
+    b1_took = None if t_b1 is None else time.time() - t_b1
+    idle.close()
+    record("Idle TLS client does not block ingest (B1)", b1_took is not None and b1_took < 1.0,
+           f"signed request answered in {b1_took:.2f}s while an idle TCP client held a connection"
+           if b1_took is not None else "request failed while an idle TCP client was connected")
     record("Tenant isolation, data residency and collector authentication",
            leak == 0 and not cross and eu_t == {"acme"} and us_t == {"globex"} and code == 421 and badcode == 401,
            f"globex requesting {len(acme_inc[:5])} acme incident IDs -> {leak} acme records returned; shared sources {len(cross)}; "
@@ -407,14 +423,21 @@ def main():
     dash = slo["dashboard"]
     record("Target: collection -> dashboard <= 10s p95",
            p95 <= 10000 and (dash.get("n", 0) == 0 or dash["p95"] <= 10000),
-           f"event time -> visible in dashboard API p95 {p95 / 1000:.2f}s (n={len(vis)}); browser render-ack p95 "
-           f"{(dash.get('p95') or 0) / 1000:.2f}s (n={dash.get('n', 0)}); measured from window start (conservative)")
+           f"event time -> visible in dashboard API p95 {p95 / 1000:.2f}s (n={len(vis)}); {render_ack_text(dash)}; "
+           f"measured from window start (conservative)")
     al = slo["alert"]
     record("Target: alert latency distribution <= 15s", al.get("n", 0) > 0 and al["p95"] <= 15000,
            f"p50 {al.get('p50', 0) / 1000:.1f}s, p95 {al.get('p95', 0) / 1000:.1f}s, max {al.get('max', 0) / 1000:.1f}s over {al.get('n')} alerts "
            f"(first breaching event time -> alert created)")
 
     write_report(started)
+
+
+def render_ack_text(dash):
+    """Report the browser render-ack sample honestly: no samples means not measured, not 0 s (bug B16)."""
+    if not dash.get("n"):
+        return "browser render-ack not measured (no browser open)"
+    return f"browser render-ack p95 {dash['p95'] / 1000:.2f}s (n={dash['n']})"
 
 
 def write_report(started):

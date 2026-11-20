@@ -35,9 +35,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.policy import CREDENTIAL_TYPES, dlp_scan, enforce, load_policy, pseudonymize, redact_text  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
-from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, load_json, now_ms, parse_iso, sha256_hex, sign  # noqa: E402
+from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, sha256_hex, \
+    sign  # noqa: E402
 
 VERSION = "1.4.0"
+MAX_FUTURE_MS = 5000   # readings further ahead than this are treated as clock skew
 METRIC_NAMES = None  # filled from policy
 UI_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.html")
 UI_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui.js")
@@ -113,6 +115,7 @@ class Collector:
         self.partition = False
         self.chaos = False
         self.held = {}
+        self.single_sends = 0          # >0: send one payload at a time to isolate a refused one
         self.last_error = ""
         self.link_state = "starting"
         self.last_delivery_ms = None
@@ -174,11 +177,14 @@ class Collector:
         """Accept one raw event (metric | log | auth). Raw content is stored locally only."""
         recv = now_ms()
         try:
-            ts = parse_iso(ev.get("ts")) if ev.get("ts") is not None else recv
+            # a timestamp without an offset is local time at this site, not UTC (bug B3)
+            ts = parse_iso(ev.get("ts"), self.cfg.get("tz")) if ev.get("ts") is not None else recv
         except Exception:
             ts = recv
         host = str(ev.get("host", "unknown"))[:64]
         etype = ev.get("type", "log")
+        if ts > recv + MAX_FUTURE_MS:
+            ts = self._clock_skew(host, ts, recv)
         self.stats["raw_events_total"] += 1
         raw = json.dumps(ev) if transport == "http" else ev.get("_raw", json.dumps(ev))
         redacted, findings = redact_text(raw)
@@ -195,6 +201,27 @@ class Collector:
                        ev.get("method", "ssh"))
         else:
             self._log(host, ts, str(ev.get("level", "INFO")).upper(), str(ev.get("message", "")))
+
+    def _clock_skew(self, host, ts, recv):
+        """A reading stamped in the future would sit in a window that never closes, so the source would
+        silently vanish (bug B3). Keep the raw record as sent, but aggregate it at the receive time and
+        tell the SaaS how far ahead the source's clock is."""
+        skew_s = round((ts - recv) / 1000)
+        self.stats["clock_skew_events"] += 1
+        with self.lock:
+            key = ("skew", host)
+            last_ts, n = self.last_emit.get(key, (0, 0))
+            n += 1
+            if recv - last_ts >= 60_000:
+                self.last_emit[key] = (recv, 0)
+                self.pending_events.append(self._ev(
+                    host, recv, "source.clock_skew", "low", n,
+                    f"source clock ahead by {skew_s}s; {n} reading(s) re-stamped with collector receive time"))
+                self.findings.appendleft({"ts": iso(recv), "host": host, "kind": "clock_skew",
+                                          "detail": f"timestamps {skew_s}s in the future (clock or timezone wrong)"})
+            else:
+                self.last_emit[key] = (last_ts, n)
+        return recv
 
     def ingest_syslog(self, line):
         m = SYSLOG_RX.match(line.strip())
@@ -395,40 +422,9 @@ class Collector:
             try:
                 if not self.ingest_base:
                     self.discover()
-                rows = self.q("SELECT payload_id, body FROM egress WHERE status='pending' AND kind='metrics' "
-                              "ORDER BY seq LIMIT 100")
-                if not rows:
+                if not self.send_once():
                     time.sleep(0.2)
                     continue
-                batch = list(rows)
-                if self.chaos:
-                    batch = self._chaos(batch)
-                    if not batch:
-                        time.sleep(0.2)
-                        continue
-                ids = [r[0] for r in batch]
-                self.x(f"UPDATE egress SET attempts=attempts+1, last_attempt_ms=? WHERE payload_id IN "
-                       f"({','.join('?' * len(ids))})", (now_ms(), *ids))
-                body = ("[" + ",".join(r[1] for r in batch) + "]").encode()
-                res = self._request("POST", self.ingest_base + "/v1/ingest", body)
-                done = set(res.get("accepted", [])) | set(res.get("duplicates", []))
-                receipts = res.get("receipts", {})
-                t = now_ms()
-                for pid in done:
-                    mine = self.q("SELECT sha256 FROM egress WHERE payload_id=?", (pid,))
-                    if not mine or receipts.get(pid) != mine[0][0]:
-                        # the SaaS must echo the digest of the exact bytes we sent; otherwise keep it pending
-                        self.stats["ack_mismatch"] += 1
-                        self.x("UPDATE egress SET note=? WHERE payload_id=?",
-                               ("acknowledgement digest mismatch - will retry", pid))
-                        continue
-                    self.x("UPDATE egress SET status='delivered', delivered_ms=COALESCE(delivered_ms, ?), "
-                           "note=NULL WHERE payload_id=?", (t, pid))
-                for rj in res.get("rejected", []):
-                    self.x("UPDATE egress SET status='rejected', note=? WHERE payload_id=?", (rj["reason"], rj["id"]))
-                self.link_state = "connected"
-                self.last_delivery_ms = t
-                self.last_error = ""
                 backoff = 0.5
             except urllib.error.HTTPError as e:
                 if e.code == 421:              # misdirected: wrong region -> re-discover
@@ -440,6 +436,61 @@ class Collector:
                 self._fail(str(e)[:160])
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 4)    # capped so the backlog drains quickly on reconnect
+
+    def send_once(self):
+        """Send one batch from the outbox. Returns False when there is nothing to send.
+
+        If the SaaS refuses a whole batch with a client error (4xx other than auth / region / rate
+        limit), the next sends go one payload at a time; a single payload that is still refused is
+        marked rejected, so one bad payload can never block the queue behind it (bug B2)."""
+        limit = 1 if self.single_sends > 0 else 100
+        rows = self.q("SELECT payload_id, body FROM egress WHERE status='pending' AND kind='metrics' "
+                      "ORDER BY seq LIMIT ?", (limit,))
+        if not rows:
+            self.single_sends = 0
+            return False
+        batch = list(rows)
+        if self.chaos:
+            batch = self._chaos(batch)
+            if not batch:
+                return False
+        ids = [r[0] for r in batch]
+        self.x(f"UPDATE egress SET attempts=attempts+1, last_attempt_ms=? WHERE payload_id IN "
+               f"({','.join('?' * len(ids))})", (now_ms(), *ids))
+        body = ("[" + ",".join(r[1] for r in batch) + "]").encode()
+        try:
+            res = self._request("POST", self.ingest_base + "/v1/ingest", body)
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500 and e.code not in (401, 421, 429):
+                if len(batch) > 1:
+                    self.single_sends = len(batch)          # find the bad one
+                else:
+                    reason = f"refused by SaaS: HTTP {e.code}"
+                    self.x("UPDATE egress SET status='rejected', note=? WHERE payload_id=?", (reason, ids[0]))
+                    self.audit("collector", "payload_rejected", f"{ids[0]}: {reason}")
+                    self.single_sends = max(0, self.single_sends - 1)
+            raise
+        if self.single_sends:
+            self.single_sends -= 1
+        done = set(res.get("accepted", [])) | set(res.get("duplicates", []))
+        receipts = res.get("receipts", {})
+        t = now_ms()
+        for pid in done:
+            mine = self.q("SELECT sha256 FROM egress WHERE payload_id=?", (pid,))
+            if not mine or receipts.get(pid) != mine[0][0]:
+                # the SaaS must echo the digest of the exact bytes we sent; otherwise keep it pending
+                self.stats["ack_mismatch"] += 1
+                self.x("UPDATE egress SET note=? WHERE payload_id=?",
+                       ("acknowledgement digest mismatch - will retry", pid))
+                continue
+            self.x("UPDATE egress SET status='delivered', delivered_ms=COALESCE(delivered_ms, ?), "
+                   "note=NULL WHERE payload_id=?", (t, pid))
+        for rj in res.get("rejected", []):
+            self.x("UPDATE egress SET status='rejected', note=? WHERE payload_id=?", (rj["reason"], rj["id"]))
+        self.link_state = "connected"
+        self.last_delivery_ms = t
+        self.last_error = ""
+        return True
 
     def _fail(self, msg):
         self.stats["send_errors"] += 1
@@ -557,6 +608,13 @@ class Collector:
                 self.audit("collector", "retention_purge", f"purged {n} raw events older than "
                            f"{self.cfg['raw_retention_min']} min")
 
+    def search(self, term):
+        """'Prove it stayed local': count the term in the local raw store vs. in outbound payloads."""
+        pat = like_contains(term)
+        n = self.q(r"SELECT COUNT(*) FROM raw_events WHERE raw LIKE ? ESCAPE '\'", (pat,))[0][0] if term else 0
+        m = self.q(r"SELECT COUNT(*) FROM egress WHERE body LIKE ? ESCAPE '\'", (pat,))[0][0] if term else 0
+        return {"term": term, "raw_matches_local": n, "egress_matches": m}
+
     # ------------------------------------------------------------------ UI state
     def state(self, since_raw=0):
         raw = self.q("SELECT id, received_ms, ts_ms, host, type, raw, redacted, findings FROM raw_events "
@@ -586,6 +644,7 @@ class Collector:
 def make_handler(col):
     class H(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        timeout = 30
 
         def log_message(self, *a):
             pass
@@ -635,9 +694,7 @@ def make_handler(col):
                 return self._send(200, {"collector_id": col.cid, "payloads": [list(r) for r in rows]})
             if self.path.startswith("/api/raw-search"):
                 term = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q", [""])[0]
-                n = col.q("SELECT COUNT(*) FROM raw_events WHERE raw LIKE ?", (f"%{term}%",))[0][0] if term else 0
-                m = col.q("SELECT COUNT(*) FROM egress WHERE body LIKE ?", (f"%{term}%",))[0][0] if term else 0
-                return self._send(200, {"term": term, "raw_matches_local": n, "egress_matches": m})
+                return self._send(200, col.search(term))
             self._send(404, {"error": "not found"})
 
         def do_POST(self):

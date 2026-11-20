@@ -11,6 +11,11 @@ class Timestamps(unittest.TestCase):
                   str(ms), ms * 1000):
             self.assertEqual(parse_ts(v), ms, v)
 
+    def test_offsetless_iso_uses_given_timezone(self):
+        self.assertEqual(parse_ts("2025-11-20 14:30:00", "Asia/Kolkata"), 1763629200000)
+        _, evs = map_record({"timestamp": "2025-11-20T14:30:00", "host": "h", "cpu": 1}, default_tz="Asia/Kolkata")
+        self.assertEqual(evs[0]["ts"], "2025-11-20T09:00:00.000Z")
+
 
 class Mapping(unittest.TestCase):
     def test_nested_metrics_logs_and_auth(self):

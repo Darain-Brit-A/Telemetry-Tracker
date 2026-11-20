@@ -200,10 +200,12 @@ class Stream:
                            "source_silent": 60}.get(name, 120)
         info = {"name": name, "collector": cid, "host": host, "injected_at": iso(), "ms": now_ms()}
         if name == "heal":
-            scope = [target] if target else [h for hs in self.hosts.values() for h in hs]
+            # only this collector's hosts: "Heal all" on one console must not end another tenant's
+            # scenario (bug B12)
+            scope = [target] if target else hosts
             for h in scope:
                 h.scn.clear()
-            self.silent.clear()
+                self.silent.pop((cid, h.name), None)
         elif name == "secret_in_log":
             h = target or random.choice(hosts)
             info["host"] = h.name

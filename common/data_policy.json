@@ -13,7 +13,8 @@
     "log.error_burst",
     "log.recurring_warning",
     "network.unreachable",
-    "service.down"
+    "service.down",
+    "source.clock_skew"
   ],
   "severities": ["info", "low", "medium", "high", "critical"],
   "heartbeat_fields": ["schema", "collector_id", "kind", "created_at", "version", "config_hash", "policy_version", "uptime_s", "stats", "tz"],

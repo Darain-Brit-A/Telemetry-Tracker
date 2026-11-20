@@ -28,9 +28,10 @@ import urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.policy import dlp_scan, load_policy, validate_inbound  # noqa: E402
+from common.tlsserver import TLSThreadingHTTPServer  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok  # noqa: E402
-from common.util import CERT_DIR, CONFIG_DIR, DATA_DIR, dumps, iso, load_json, now_ms, parse_iso, save_json, \
-    sha256_hex, verify_sig  # noqa: E402
+from common.util import CERT_DIR, CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, \
+    save_json, sha256_hex, verify_sig  # noqa: E402
 from saas.aiops import ACTIONS, STATES, Engine  # noqa: E402
 from saas.store import Stores  # noqa: E402
 
@@ -95,37 +96,54 @@ class App:
                 recv = now_ms()
                 seq = p.get("seq") or 0
                 ooo = 1 if seq < self.max_seq.get(cid, 0) else 0
-                cur = st.x("INSERT OR IGNORE INTO payloads(payload_id,tenant_id,collector_id,seq,kind,created_ms,"
-                           "received_ms,sha256,bytes,body,out_of_order) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                           (pid, t, cid, seq, p["kind"], parse_iso(p["created_at"]), recv, sha256_hex(body),
-                            len(body), body, ooo))
-                if cur.rowcount == 0:
-                    stored = st.q1("SELECT sha256 FROM payloads WHERE payload_id=? AND tenant_id=?", (pid, t))
-                    if not stored or stored[0] != sha256_hex(body):
-                        # same ID, different bytes: a bug or tampering - never silently accept
-                        st.bump(t, "security", "payload_id_conflicts")
-                        self.engine.audit(t, f"collector:{cid}", "payload_id_conflict",
-                                          f"payload {pid} re-sent with different content; rejected")
-                        res["rejected"].append({"id": pid, "reason": "conflict: payload_id already stored with "
-                                                                  "different content", "code": 409})
-                        continue
-                    res["receipts"][pid] = stored[0]
-                    st.bump(t, "delivery", "duplicates_ignored")
-                    st.bump(t, f"collector:{cid}", "duplicates_ignored")
+                try:
+                    with st.savepoint():
+                        outcome = self._store_one(t, cid, p, pid, body, recv, seq, ooo, st)
+                except Exception as e:      # one bad payload must not take the batch down (bug B2)
+                    st.bump(t, "delivery", "processing_errors")
+                    self.engine.audit(t, f"collector:{cid}", "processing_error", f"payload {pid}: {e!r}"[:300])
+                    res["rejected"].append({"id": pid, "reason": f"processing error: {type(e).__name__}"})
+                    continue
+                if outcome == "conflict":
+                    res["rejected"].append({"id": pid, "reason": "conflict: payload_id already stored with "
+                                                              "different content", "code": 409})
+                    continue
+                if outcome[0] == "duplicate":
+                    res["receipts"][pid] = outcome[1]
                     res["duplicates"].append(pid)
                     continue
                 if ooo:
                     st.bump(t, "delivery", "out_of_order_payloads")
                     st.bump(t, f"collector:{cid}", "out_of_order_payloads")
                 self.max_seq[cid] = max(self.max_seq.get(cid, 0), seq)
-                self.engine.replay_delay = recv - parse_iso(p["created_at"])
-                try:
-                    self._process(t, cid, p, recv, st)
-                finally:
-                    self.engine.replay_delay = 0
                 res["accepted"].append(pid)
                 res["receipts"][pid] = sha256_hex(body)
         return res
+
+    def _store_one(self, t, cid, p, pid, body, recv, seq, ooo, st):
+        """Insert (idempotently) and process one payload. Runs inside a savepoint, so any exception
+        here rolls back only this payload. Returns "accepted", "conflict" or ("duplicate", sha)."""
+        cur = st.x("INSERT OR IGNORE INTO payloads(payload_id,tenant_id,collector_id,seq,kind,created_ms,"
+                   "received_ms,sha256,bytes,body,out_of_order) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                   (pid, t, cid, seq, p["kind"], parse_iso(p["created_at"]), recv, sha256_hex(body),
+                    len(body), body, ooo))
+        if cur.rowcount == 0:
+            stored = st.q1("SELECT sha256 FROM payloads WHERE payload_id=? AND tenant_id=?", (pid, t))
+            if not stored or stored[0] != sha256_hex(body):
+                # same ID, different bytes: a bug or tampering - never silently accept
+                st.bump(t, "security", "payload_id_conflicts")
+                self.engine.audit(t, f"collector:{cid}", "payload_id_conflict",
+                                  f"payload {pid} re-sent with different content; rejected")
+                return "conflict"
+            st.bump(t, "delivery", "duplicates_ignored")
+            st.bump(t, f"collector:{cid}", "duplicates_ignored")
+            return ("duplicate", stored[0])
+        self.engine.replay_delay = recv - parse_iso(p["created_at"])
+        try:
+            self._process(t, cid, p, recv, st)
+        finally:
+            self.engine.replay_delay = 0
+        return ("accepted", None)
 
     def _process(self, t, cid, p, recv, st):
         for s in p.get("sources", []):
@@ -267,6 +285,14 @@ class App:
                 "states": STATES, "policy_version": self.policy["policy_version"],
             }
 
+    def search_metadata(self, t, term):
+        """Count stored payloads / event contexts containing `term` (proof that a value never arrived)."""
+        st = self.stores.for_tenant(t)
+        pat = like_contains(term)
+        n = st.q1(r"SELECT COUNT(*) FROM payloads WHERE tenant_id=? AND body LIKE ? ESCAPE '\'", (t, pat))[0] if term else 0
+        e = st.q1(r"SELECT COUNT(*) FROM events WHERE tenant_id=? AND context LIKE ? ESCAPE '\'", (t, pat))[0] if term else 0
+        return {"term": term, "payload_matches": n, "event_matches": e}
+
     def act(self, user, aid, op):
         t = user["tenant_id"]
         st = self.stores.for_tenant(t)
@@ -325,6 +351,7 @@ APP = None
 
 class Base(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 30            # slow or idle clients release their thread instead of holding it forever
 
     def log_message(self, *a):
         pass
@@ -470,10 +497,7 @@ class DashHandler(Base):
             rows[0]["analysis"] = json.loads(rows[0]["analysis"] or "{}")
             return self.send(200, rows[0])
         if path == "/api/search-metadata":
-            term = qs.get("q", [""])[0]
-            n = st.q1("SELECT COUNT(*) FROM payloads WHERE tenant_id=? AND body LIKE ?", (t, f"%{term}%"))[0] if term else 0
-            e = st.q1("SELECT COUNT(*) FROM events WHERE tenant_id=? AND context LIKE ?", (t, f"%{term}%"))[0] if term else 0
-            return self.send(200, {"term": term, "payload_matches": n, "event_matches": e})
+            return self.send(200, APP.search_metadata(t, qs.get("q", [""])[0]))
         self.send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -539,12 +563,14 @@ def main():
     APP = App()
     http.server.ThreadingHTTPServer.request_queue_size = 256   # default backlog of 5 refused bursts
     threading.Thread(target=engine_loop, daemon=True).start()
-    ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
     if APP.reg.get("tls"):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.load_cert_chain(os.path.join(CERT_DIR, "server.crt"), os.path.join(CERT_DIR, "server.key"))
-        ingest.socket = ctx.wrap_socket(ingest.socket, server_side=True)
+        # handshake per connection thread, never in accept() (bug B1)
+        ingest = TLSThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler, ctx)
+    else:
+        ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
     threading.Thread(target=ingest.serve_forever, daemon=True).start()
     dash = http.server.ThreadingHTTPServer(("127.0.0.1", APP.reg["dashboard_port"]), DashHandler)
     print(f"[saas] ingest {APP.scheme}://127.0.0.1:{APP.ingest_port} (regions: {', '.join(APP.reg['regions'])})  "

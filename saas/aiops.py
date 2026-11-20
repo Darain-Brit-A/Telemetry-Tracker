@@ -268,7 +268,8 @@ class Engine:
                  "log.error_burst": "Application error burst",
                  "log.recurring_warning": "Recurring warning",
                  "network.unreachable": "Source unreachable from collector",
-                 "service.down": "Service health check failing"}.get(cat, cat)
+                 "service.down": "Service health check failing",
+                 "source.clock_skew": "Source clock is ahead"}.get(cat, cat)
         detail = {"category": cat, "count": ev.get("count"), "context": ev.get("context"),
                   "fingerprint": ev.get("fingerprint"), "onset": ev.get("ts")}
         self.open_alert(t, f"{sid}:{cat}", sid, cat, "event", ev["severity"], f"{title}: {ev.get('context', '')}"[:200],
@@ -447,10 +448,16 @@ class Engine:
         for a in st.rows("SELECT source_id, signal, kind, severity, detail FROM alerts WHERE tenant_id=? AND "
                          "status='open' AND source_id IS NOT NULL", (t,)):
             open_alerts[a["source_id"]].append(a)
+        # freshness counts every metric a source reports, not only the threshold metrics, so a
+        # bandwidth-only device is not shown as "no data" (bug B6)
+        newest_by_source = {}
+        for (tt, ss, _), (ts, _) in self.latest.items():
+            if tt == t and ts > newest_by_source.get(ss, 0):
+                newest_by_source[ss] = ts
         for src in st.rows("SELECT * FROM sources WHERE tenant_id=?", (t,)):
             sid = src["source_id"]
             state, reasons = 0, []
-            newest = 0
+            newest = newest_by_source.get(sid, 0)
             for name, thr in T["thresholds"].items():
                 lv = self.latest.get((t, sid, name))
                 if not lv:
@@ -806,6 +813,13 @@ class Engine:
                        s["detail"].get("context"), "diag.collect_logs", s["source_id"],
                        "Only message-template fingerprints left the environment; the full logs are bundled locally "
                        "for the engineer.", 0.5)
+        if "source.clock_skew" in names:
+            s = next(x for x in sig if x["signal"] == "source.clock_skew")
+            return out(f"Clock skew on {s['service']}", s["detail"].get("context"), "data.check_agent", None,
+                       "Readings from this source carry timestamps in the future, usually a wrong clock or a "
+                       "timezone sent without an offset. The collector re-stamps them so they stay visible, but "
+                       "event-time ordering for this source is unreliable until its clock or timezone is fixed.",
+                       0.8)
         if "data.stale" in names:
             s = next(x for x in sig if x["signal"] == "data.stale")
             return out(f"Telemetry gap from {s['service']}", "The source stopped reporting while its collector is "

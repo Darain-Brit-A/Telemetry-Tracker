@@ -117,7 +117,7 @@ dashboard can render UTC, source-local or viewer-local time.
 | Stage | Implementation |
 |---|---|
 | Baseline | per (tenant, source, metric): rolling median + MAD over the last 90 *normal* windows (≥ 15 before arming); anomalous points are excluded so a sustained fault cannot become the new normal |
-| Detect | robust z = (x − median) / max(1.4826·MAD, metric floor); 1 s windows; open when z ≥ 4 for 3 consecutive windows (persistence filter), clear after 5 normal windows; static thresholds as a backstop (Poor after 2 windows, Fair after 3, so a single 1 s blip never pages). Measured on 60 labelled trials: precision 95%, recall 96%, 0.5 false alarms per host-hour (docs/BENCHMARK.md) |
+| Detect | robust z = (x − median) / max(1.4826·MAD, metric floor); 1 s windows; open when z ≥ 4 for 3 consecutive windows (persistence filter), clear after 5 normal windows; static thresholds as a backstop (Poor after 2 windows, Fair after 3, so a single 1 s blip never pages). Measured on 60 labelled trials across 5 seeds: precision 94-97%, recall 92-100%, 0.3-0.6 false alarms per host-hour (docs/BENCHMARK.md) |
 | Normal spike vs anomaly | peer comparison: if ≥ 60 % of same-role peers deviate together **and** inbound traffic rises, the incident is classified *demand* (severity low, recommend scale-out); peers together without traffic = suspected fleet-wide change; alone = isolated fault |
 | Correlate | an alert joins an open incident if it relates to an **active** alert there: same source, service dependency at the same site, network signals at a shared site, same collector, or same demand signal on the same role. Repeats of an open alert key are counted, not re-raised |
 | Root cause | score = 0.3·earliest onset + 0.4·upstream-of-other-affected-services + 0.2·severity + 0.1·signal count |
@@ -145,9 +145,10 @@ Every state change is written to the health history with UTC time, previous stat
 | collector polling for commands | long-poll / gRPC stream; mTLS per collector with short-lived certs from enrolment |
 | config file registry | control-plane DB with tenant → region pinning; replication between regions only via an explicit policy record |
 
-Measured today (docs/LOADTEST.md, real TLS + HMAC, full AIOps path, one process): about 107
-payloads/s or 3,900 metric points/s, which is roughly 100 collectors at one payload per second with
-p95 request latency around 1 s and zero loss. Past that, latency grows rather than data being
+Measured (docs/LOADTEST.md, real TLS + HMAC, full AIOps path, one process, one laptop): about
+90-107 payloads/s or 3,300-3,900 metric points/s; the best run reached 107, repeated runs on a busier
+machine 88-94. That is roughly 100 collectors at one payload per second, with p95 request latency
+between 0.3 and 1.5 s across runs and zero loss in every run. Past that, latency grows rather than data being
 dropped, because collectors hold payloads until acknowledged. Batches are written in one SQLite
 transaction each, and the health tick keeps open alerts in memory so it does not query per source.
 

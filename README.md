@@ -78,20 +78,20 @@ one collector, `billing-app -> billing-db / edge-firewall`).
 
 | Target (guide Section 2) | Required | Measured |
 |---|---|---|
-| Collection to dashboard, 95th percentile | 10 s | 2.6 s |
+| Collection to dashboard, 95th percentile | 10 s | 2.4-2.6 s |
 | Threshold breach to alert, 95th percentile | 15 s | 3.8 s |
-| Collector offline detection | 60 s | 30.0 s |
-| Backlog after outage | zero loss, zero duplicates | 482 sent, 482 stored, 0 gaps, drained in 0.6 s |
+| Collector offline detection | 60 s | 30-31 s |
+| Backlog after outage | zero loss, zero duplicates | 481 sent, 481 stored, 0 gaps, drained in under 5 s |
 
-All 16 end-to-end checks pass (`docs/VALIDATION_REPORT.md`), including a stream in an unknown
-format fed through the adapter.
+All 17 end-to-end checks pass (`docs/VALIDATION_REPORT.md`), including a stream in an unknown
+format fed through the adapter and an idle client holding a TLS connection.
 
 | Quality and scale | Result |
 |---|---|
-| Detector precision / recall (60 labelled trials) | 95% / 96% |
-| False alarms per host-hour of normal data | 0.5 |
-| Root cause correct on cascading faults | 80% |
-| Ingest capacity, single process | ~107 payloads/s (~3,900 points/s); 100 collectors fully served at p95 1.0 s, zero loss |
+| Detector precision / recall (60 labelled trials, 5 seeds) | 94-97% / 92-100% |
+| False alarms per host-hour of normal data | 0.3-0.6 |
+| Root cause correct on cascading faults | 90-100% |
+| Ingest capacity, single process | about 90-107 payloads/s (3,300-3,900 points/s), varying with machine load between runs; 100 collectors at one payload/s each: ~94 accepted/s, zero errors, zero loss |
 
 ## Innovation highlights
 
@@ -120,8 +120,8 @@ format fed through the adapter.
 
 * Telemetry in the demo is simulated. The inputs are real (HTTP JSON, syslog UDP, file replay
   through the adapter) but there is no SNMP poller or NetFlow parser.
-* SQLite and a single process per tier with one lock. The load test shows the ceiling (~107
-  payloads/s). Production would use regional Kafka, a time-series store and AIOps workers
+* SQLite and a single process per tier with one lock. The load test shows the ceiling (about
+  90-107 payloads/s on this laptop, varying with machine load). Production would use regional Kafka, a time-series store and AIOps workers
   sharded by series (ARCHITECTURE section 8).
 * The dashboard runs plain HTTP on localhost with local users. Production needs TLS, SSO/OIDC and finer RBAC.
 * The collector console has no login. It only listens on 127.0.0.1 and refuses foreign Host and Origin headers.
