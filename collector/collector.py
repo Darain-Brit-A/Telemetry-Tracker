@@ -14,6 +14,7 @@ import argparse
 import collections
 import ctypes
 import hashlib
+import hmac
 import http.server
 import json
 import os
@@ -81,6 +82,13 @@ def template_of(msg):
     return t
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Turn every 3xx from the SaaS into an error instead of following it to another URL."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, f"redirect to {newurl} refused", headers, fp)
+
+
 class Collector:
     def __init__(self, cfg):
         global METRIC_NAMES
@@ -101,6 +109,8 @@ class Collector:
         if cfg.get("ca_file"):
             # TLS 1.3, pinned private CA, hostname checked; our own client certificate for mutual TLS
             self.ssl_ctx = client_context(cfg["ca_file"], cfg.get("client_cert"), cfg.get("client_key"))
+        # redirects are refused: metadata only ever goes to the configured SaaS origin
+        self.opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=self.ssl_ctx), NoRedirect)
         self.ingest_base = None
         self.region = None
 
@@ -267,7 +277,9 @@ class Collector:
         redacted, findings = redact_with_entropy(message)
         creds = [f for f in findings if f in CREDENTIAL_TYPES]
         possible = findings.count("possible_secret")
-        fp = "fp-" + hashlib.sha256(template_of(redacted).encode()).hexdigest()[:8]
+        # keyed with the collector's salt: the SaaS cannot confirm a guessed template by hashing it
+        fp = "fp-" + hmac.new(self.cfg["pseudonym_salt"].encode(), template_of(redacted).encode(),
+                              hashlib.sha256).hexdigest()[:8]
         with self.lock:
             dq = self.logs[host]
             dq.append((ts, level, fp))
@@ -429,7 +441,7 @@ class Collector:
         req = urllib.request.Request(url, data=body if method == "POST" else None, method=method, headers={
             "Content-Type": "application/json", "X-Collector-Id": self.cid, "X-Timestamp": ts,
             "X-Signature": sign(self.cfg["secret"], method, path, body, ts), "User-Agent": f"aiops-collector/{VERSION}"})
-        with urllib.request.urlopen(req, timeout=timeout, context=self.ssl_ctx) as r:
+        with self.opener.open(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
 
     def discover(self):
