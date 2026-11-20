@@ -1,323 +1,248 @@
-# Known bugs
+# Bugs
 
-Found on 2026-11-20 by reading the code and then trying to break the running stack (`python run_all.py`).
-Every bug marked **Reproduced** was triggered on the live system and the result is quoted. Bugs marked
-**Code reading** were not triggered, usually because they need hours of uptime or a crash at a precise
-moment, but the cause is visible in the lines given. Line numbers refer to the code as it was when the
-bug was filed; fixes since then have moved some lines.
+Last updated 2026-11-20, after the Phase 1 fixes. **13 open, 8 fixed.**
 
-Entries that turned out to be wrong or overstated are corrected in place and marked **Correction**
-(B5, B9), so the history of what was claimed stays visible.
+Every bug marked **Reproduced** was triggered on the running system or in a test, and the result is
+quoted. **Code reading** means the cause is visible in the code but the bug was not triggered, usually
+because it needs hours of uptime or a crash at an exact moment. File and line references describe the
+code at the time of writing.
 
-The fix plan is in [plan.md](plan.md).
+Each open bug has its own plan below. [plan.md](plan.md) puts them in order with effort estimates.
+Rules for every fix: write a test that fails first, fix, run all tests, one bug per commit, then mark
+it fixed here with the commit hash.
 
-## Summary
+## Open bugs
 
-| ID | Severity | Bug | How found | Status |
+| ID | Severity | Bug | How found | Phase |
 |---|---|---|---|---|
-| B1 | Critical | One idle TCP connection to the TLS port freezes all collector ingest | Reproduced | Fixed |
-| B2 | High | One malformed payload makes the whole batch fail, and the collector retries it forever | Reproduced | Fixed |
-| B3 | High | Events with a future timestamp never reach the SaaS (device clock or timezone skew) | Reproduced | Fixed |
-| B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | Open |
-| B5 | Medium | Search on both proof panels treats `_` and `%` as wildcards and can report false leaks | Reproduced | Fixed |
-| B6 | Medium | A source that reports only bandwidth is shown as Poor, "no data" | Reproduced | Fixed |
-| B7 | Medium | No brute-force protection on dashboard login | Reproduced | Open |
-| B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced | Open |
-| B9 | Low | Collector sequence numbers restart after 24 h without telemetry plus a restart | Code reading | Open |
-| B10 | Medium | A remediation command can get stuck in "dispatched" forever | Code reading | Open |
-| B11 | Medium | Any logged-in user can skew the dashboard latency SLO | Code reading | Open |
-| B12 | Low | "Heal all" on one collector console heals every tenant's simulated faults | Code reading | Fixed |
-| B13 | Low | Collector CPU in heartbeats is measured over the wrong interval | Code reading | Open |
-| B14 | Low | Memory grows without limit in several in-process caches | Code reading | Open |
-| B15 | Low | SaaS forgets per-collector sequence state on restart | Code reading | Open |
-| B16 | Low | Validation report prints "render-ack p95 0.00s" when there were no samples | Code reading | Fixed |
-| B17 | Low | An acknowledgement digest mismatch is retried forever with no escalation | Code reading | Open |
-| B18 | Low | Stream adapter can map a record's `name` / `value` fields as a metric by mistake | Code reading | Open |
-| B19 | Medium | About 1 in 9,000 payloads is blocked by DLP because its UUID looks like a card number | Reproduced (verify run) | Fixed |
+| B4 | High | Drops are never detected, only rises (dead service, traffic collapse) | Reproduced | 2 |
+| B20 | Medium | Timezone handling silently falls back to UTC on machines without the `tzdata` package | Reproduced | 2 |
+| B7 | Medium | No brute-force protection on dashboard login | Reproduced | 2 |
+| B8 | Medium | SaaS stores grow without limit (no retention on any table) | Reproduced | 3 |
+| B10 | Medium | A remediation command can get stuck in "dispatched" forever | Code reading | 2 |
+| B11 | Medium | Any logged-in user can skew the dashboard latency SLO | Code reading | 2 |
+| B18 | Medium | Adapter mis-maps `name` / `value` fields, and no percentage is range-checked | Reproduced | 2 |
+| B9 | Low | Collector sequence numbers restart after 24 h without telemetry plus a restart | Code reading | 2 |
+| B21 | Low | A rejected payload's readings stay in the engine's memory | Reproduced | 3 |
+| B13 | Low | Collector CPU in heartbeats is measured over the wrong interval | Code reading | 3 |
+| B14 | Low | Memory grows without limit in several in-process caches | Code reading | 3 |
+| B15 | Low | SaaS forgets per-collector sequence state on restart | Code reading | 3 |
+| B17 | Low | An acknowledgement digest mismatch is retried forever with no escalation | Code reading | 3 |
 
 ---
 
-## B1. One idle TCP connection freezes all collector ingest (Critical)
+### B4. Drops are never detected (High)
 
-**Where:** `saas/server.py:547`, `ingest.socket = ctx.wrap_socket(ingest.socket, server_side=True)`
+**Where:** `saas/aiops.py`, `on_point()`: `if z is not None and z >= Z_OPEN:` checks only the upward
+direction.
 
-**What happens:** the listening socket is wrapped in TLS, so the TLS handshake runs inside `accept()`
-on the server's single accept thread. A client that opens a TCP connection and never sends a
-ClientHello blocks that thread. No other collector can connect until the idle client goes away.
+**Evidence:** unit harness on the real engine, 60 s of normal data, then 20 s with inbound traffic at
+0 Mbps (was ~120) and CPU at 2% (was ~40%): **0 alerts**.
 
-**Reproduced:**
-```
-normal request:                              HTTP 401 in 0.01s
-while one idle TCP client is connected:      FAILED after 6.0s (URLError)
-after it disconnects:                        HTTP 401 in 0.01s
-```
+**Impact:** a crashed process, a traffic black hole or a dead uplink often shows up as numbers falling.
+Unless the collector's reachability or service probe also fails, the platform stays green.
 
-**Impact:** anyone who can reach port 8443 can stop all telemetry with one socket, no credentials
-needed. In a demo, a stuck health checker or port scanner would make every collector look offline.
-The same server also has no socket timeouts, so slow clients pin threads indefinitely.
+**Plan:** give each metric a direction. CPU, memory, disk, latency and loss alert on rises; inbound and
+outbound traffic alert on rises and drops; CPU also alerts on a sustained collapse to near zero. Use
+the same robust z-score with the sign flipped and the same persistence filter. Add a playbook rule
+"traffic collapse / service stopped serving", and `traffic_drop` / `cpu_collapse` scenarios to the
+simulator and the benchmark.
+**Test:** traffic 120 to 0 Mbps for 10 s raises one alert with a "drop" explanation; the benchmark
+range across five seeds must not get worse than precision 94% / recall 92%.
 
-**Status: fixed** (commit "Fix B1"). The listening socket stays plain and each connection does its
-TLS handshake in its own thread with a 10 s timeout (`common/tlsserver.py`). All handlers now have a
-30 s socket timeout. Test: `tests/test_tls_server.py` failed with "handshake operation timed out"
-before the change and passes after it; `verify.py` has a regression check. Live re-run of the
-reproduction: `HTTP 401 in 0.01s` while an idle client is connected.
+### B20. Timezone handling depends on an optional package (Medium)
 
-## B2. One malformed payload poisons the whole batch (High)
+**Where:** `common/util.py`, `_zone()` uses `zoneinfo`, which on Windows has no system timezone
+database (`zoneinfo.TZPATH` is empty) and only works if the third-party `tzdata` package is installed.
+`_zone()` then falls back to UTC without saying so. Introduced by the B3 fix.
 
-**Where:** `saas/server.py`, `App.ingest` runs the batch in one transaction; the handler turns any
-`KeyError` / `ValueError` into HTTP 400 for the entire request (`saas/server.py:387`). The collector
-treats a 400 as a transport failure and resends the same batch (`collector/collector.py`, `sender_loop`).
+**Evidence:** this machine has `tzdata` installed, which is why every test passed. With it hidden:
+`14:30` in `Asia/Kolkata` without an offset was read as `1763649000000` instead of `1763629200000`, i.e.
+5.5 hours off, with no warning.
 
-**Reproduced:** a signed batch of one valid payload and one payload whose metric timestamp is
-`"not-a-timestamp"`:
-```
-batch [valid, malformed] -> HTTP 400 "bad request: Invalid isoformat string: 'not-a-timestamp'"
-valid payload stored? False
-```
+**Impact:** on a stock Windows Python, the B3 fix for offset-less timestamps does nothing, and readings
+from such a source show up as clock skew instead of being read correctly. The README promises no
+third-party packages. The Windows CI jobs are likely to fail two tests
+(`test_offsetless_timestamp_uses_collector_timezone` and the adapter timezone test).
 
-**Impact:** the valid payload is lost along with the bad one. Because the collector sends its outbox in
-sequence order, the bad payload sits at the head of the queue and is retried forever, so nothing behind
-it is ever delivered. Any unexpected exception during processing (not only bad input) has the same
-effect. The allow-list check does not catch this because it validates field names, not value formats.
+**Plan:** stop depending on a timezone database for the common case. Record a fixed UTC offset per
+collector at setup (`utc_offset_min` in the collector config, computed from the IANA name with a
+small built-in table for the zones in use) and use it for offset-less timestamps; use `zoneinfo` only
+when it is actually available, to get daylight-saving changes right. Log a clear warning once when
+a zone cannot be resolved instead of silently using UTC.
+**Test:** with `zoneinfo` blocked (the same trick used to reproduce it), `14:30` IST still parses to
+`09:00Z`; an unknown zone logs a warning.
 
-**Status: fixed** (commit "Fix B2"). The SaaS validates value formats (timestamps, finite numbers,
-counts) as well as field names, and processes each payload inside its own SQLite savepoint, so an
-unexpected error rolls back and rejects only that payload (a follow-up commit moved an import out of
-the validation hot path after an A/B load test showed it cost 8% throughput; HEAD now matches the
-pre-fix commit at 93.7 payloads/s). The collector marks rejected payloads and
-moves on; if a whole batch is refused with a 4xx it resends one payload at a time and rejects only
-the bad one. Tests: `tests/test_poison_batch.py` (4 tests, all failed before the change). Live
-re-run: the valid payload was accepted and stored, the malformed one rejected with
-"metrics[0].ts is not an ISO-8601 timestamp".
+### B7. No brute-force protection on login (Medium)
 
-## B3. Future-dated events never reach the SaaS (High)
+**Where:** `saas/server.py`, `/api/login`. A failed login sleeps 0.5 s in its own request thread,
+which slows one attacker thread but not parallel ones.
 
-**Where:** `collector/collector.py:220` (`_metric`) buckets events by their own timestamp with no sanity
-check, and `flush_loop` only flushes a window once wall-clock time has passed its end.
-`common/util.py:29` (`parse_iso`) also treats a timestamp without an offset as UTC.
+**Evidence:** 40 wrong-password attempts in parallel finished in 0.75 s (all 401), about 50 guesses
+per second from one machine.
 
-**Reproduced:** 15 readings for host `future-1` stamped one hour ahead:
-```
-future-1: sent 15 readings -> NOT VISIBLE ON SAAS AT ALL
-```
+**Plan:** count failed logins per username and per client IP. After 5 failures lock for 30 s, doubling
+with each further failure, capped at 15 minutes, and return 429 while locked. Write each lockout to the
+audit log. Keep the constant-time password check.
+**Test:** 6 wrong passwords then the right one gets 429 until the lock expires; 40 parallel attempts
+get at most 5 guesses through.
 
-**Impact:** a device whose clock runs ahead, or that sends local time without an offset (for example
-IST written as if it were UTC, 5.5 hours ahead), is silently invisible for hours. Nothing tells the
-operator why. This is likely with an unfamiliar organizer stream.
+### B8. SaaS storage grows without limit (Medium)
 
-**Status: fixed** (commit "Fix B3"). A reading more than 5 s in the future is kept as sent in the raw
-store but aggregated at the collector's receive time, and the collector sends an allow-listed
-`source.clock_skew` event (count and skew in seconds only). The SaaS turns that into a "Clock skew on
-<service>" incident with an explanation. Timestamps without an offset are read in the collector's
-configured timezone (and in the adapter's `--tz`), not as UTC. Tests: `tests/test_clock_skew.py`
-(3 of 4 failed before; the 2 s jitter case already passed) plus an adapter timezone test. Live
-re-run: `future-1` now shows as Excellent with its 40% CPU reading, and the dashboard shows
-"Clock skew on unknown" for it.
+**Where:** nothing in `saas/` ever deletes from `payloads`, `metrics`, `latency`, `events` or
+`health_history`. Payload bodies are stored in full.
 
-## B4. Drops are never detected (High)
-
-**Where:** `saas/aiops.py:201`, `if z is not None and z >= Z_OPEN:` checks only the upward direction.
-
-**Reproduced** (unit harness, real engine): 60 s of normal data, then 20 s with inbound traffic at
-0 Mbps (was ~120) and CPU at 2% (was ~40%):
-```
-alerts raised: 0
-```
-
-**Impact:** a crashed process, a traffic black hole or a dead uplink often shows up as numbers
-*falling*. Unless the collector's reachability or service probe also fails, the platform stays green.
-
-## B5. Proof-panel search can report false leaks (Medium)
-
-**Where:** `collector/collector.py:638-639` and `saas/server.py:474-475` build `LIKE '%term%'`
-without escaping `%` and `_`.
-
-**Reproduced:**
-```
-collector search '%' : raw_matches_local 4491, egress_matches 988
-```
-No payload contains a `%`, so all 988 outbound matches are false. `_` matches any single character, so
-`pay_oad_id` matched `payload_id`.
-
-**Correction (found while fixing):** the original report also quoted `'_' -> 988 egress matches` as
-evidence. That was wrong: every payload genuinely contains underscores (`payload_id`, `cpu_pct`), so
-most of those matches were real. Severity lowered from High to Medium: a false positive needs a `%`
-in the search term, or an `_` standing in for a character that differs.
-
-**Impact:** "Prove it stayed local" and "Search SaaS store" are the panels judges use to check for
-leaks. A false "found in outbound payloads" reads as a data-protection failure on stage.
-
-**Status: fixed** (commit "Fix B5"). Both searches escape `\`, `%` and `_` (`common.util.like_contains`)
-and use `LIKE ? ESCAPE '\'`. Tests: `tests/test_search.py` failed before and passes now. Same data,
-old query vs fixed query: `%` 1 -> 0, `pay_oad_id` 1 -> 0, `cpu_pct` 1 -> 1. Live re-run after
-restart: `%` -> 0 outbound matches, `payload_id` -> 11 (real).
-
-## B6. Bandwidth-only sources show as "no data" (Medium)
-
-**Where:** `saas/aiops.py:454`. Freshness is computed only from the threshold metrics (CPU, memory,
-disk, latency, loss) plus `reachable` / `svc_up`.
-
-**Reproduced:** 15 readings of only `bw_in_mbps` / `bw_out_mbps` for host `bw-only-1`:
-```
-bw-only-1 -> ('Poor', 'no data - last value NOT shown as current')
-```
-
-**Impact:** network devices or flow exporters that only report traffic are permanently Poor and also
-raise a stale-data alert, which is a false alarm. The same applies to any organizer source whose
-fields map only to bandwidth.
-
-**Status: fixed** (commit "Fix B6"). Freshness now uses the newest reading of any metric the source
-reports. Tests: `tests/test_freshness.py` (the bandwidth-only case failed before; the check that a
-genuinely silent source still goes Poor passes before and after). Live re-run: `bw-only-1` is
-Excellent, "all metrics within baseline and thresholds", with no stale alert.
-
-## B7. No brute-force protection on login (Medium)
-
-**Where:** `saas/server.py:490`. A failed login sleeps 0.5 s in its own request thread, which slows
-one attacker thread but not parallel ones.
-
-**Reproduced:** 40 wrong-password attempts in parallel finished in 0.75 s (all 401).
-
-**Impact:** about 50 password guesses per second from one machine. There is no per-account or per-IP
-lockout and no logging of repeated failures.
-
-## B8. SaaS storage grows without limit (Medium)
-
-**Where:** no retention anywhere in `saas/` (there is no `DELETE` on `payloads`, `metrics`, `latency`,
-`events` or `health_history`). Payload bodies are stored in full.
-
-**Reproduced:** after 43 minutes with two collectors, the eu-west store held 2,097 payloads, 55,029
-metric rows and 1,895 latency rows, 16.2 MB. That is roughly 0.5 GB per day for a region with two
-collectors of four hosts each; it scales with the number of sources.
+**Evidence:** after 43 minutes with two collectors, the eu-west store held 2,097 payloads, 55,029
+metric rows and 1,895 latency rows, 16.2 MB, roughly 0.5 GB per day for that region.
 
 **Impact:** the disk fills on a long-running demo or pilot, and queries over these tables (overview,
-reliability counts, SLO stats) slow down as history grows. The dashboard overview takes 17-20 ms and
-returns 144 KB per poll today; that cost rises with the payload count.
+reliability counts, SLO stats) slow down as history grows. The overview poll takes 17-20 ms and
+returns 144 KB today.
 
-## B9. Collector sequence numbers can restart (Low)
+**Plan:** an hourly retention job in the engine loop, with per-tenant settings: drop payload bodies
+after 24 h but keep ID, sequence and SHA-256 for the delivery proof; keep metrics 7 days, latency
+samples 24 h, events and health history 30 days; run an incremental vacuum. Show the settings on the
+Thresholds tab.
+**Test:** rows with old timestamps are deleted by the job, and delivery reconciliation still reports
+0 gaps afterwards.
 
-**Where:** `collector/collector.py:120` starts the counter from `MAX(seq)` in the outbox, and
-`collector/collector.py:554` deletes delivered rows older than 24 hours.
+### B10. Remediation commands can get stuck (Medium)
 
-**What happens:** if a collector keeps running for more than 24 hours **without receiving any
-telemetry**, it creates no numbered payloads, so retention eventually deletes every numbered outbox
-row (heartbeat rows have no sequence number). If it is then restarted, `MAX(seq)` is empty and
-numbering starts again at 1. The SaaS still holds the old sequence numbers, so it flags new payloads
-as out of order and computes a wrong gap count (`max_seq - count`). Deleting the collector's data
-directory has the same effect.
-
-**Correction (found on re-check):** the original entry said "idle *or stopped* for more than 24 hours"
-and rated this Medium. Stopping is safe: retention does not run while the collector is stopped, and on
-restart the counter is read before the first retention pass (30 s later) and then kept in memory.
-The trigger is narrower than first stated, so severity is lowered to Low.
-
-**Impact:** gap detection and the out-of-order counter become wrong for that collector after the
-restart, which undermines the "zero loss, provable by sequence numbers" evidence.
-
-## B10. Remediation commands can get stuck (Medium)
-
-**Where:** `saas/server.py:183` marks a command `dispatched` when the collector fetches it;
-`collector/collector.py:519-544` executes it and posts the result once.
+**Where:** `saas/server.py` marks a command `dispatched` when the collector fetches it;
+`collector/collector.py`, `execute()`, posts the result once and ignores a failed POST.
 
 **What happens:** if the collector crashes after fetching but before reporting, or the result POST
-fails, the action stays `dispatched` forever. There is no timeout, no retry and no way to re-run it
-from the dashboard.
+fails, the action stays `dispatched` forever. There is no timeout, no retry and no way to re-run it.
 
-## B11. Dashboard latency SLO can be skewed by any user (Medium)
+**Plan:** record `dispatched_ms`; if no result arrives within 60 s, put the command back to `approved`
+(up to 3 attempts), then mark it `failed` with a retry button. The collector remembers command IDs it
+has executed so a retried command is not run twice, and retries posting the result until it is
+acknowledged.
+**Test:** the collector fetches a command and "crashes" before reporting; after 60 s the command is
+dispatched again and executes exactly once.
 
-**Where:** `saas/server.py:506`, `/api/render-ack` accepts `event_ts_ms` and `render_ms` from the
-browser and records the difference.
+### B11. Dashboard latency SLO can be skewed by any user (Medium)
 
-**What happens:** any logged-in user (including a viewer) can post fabricated values and push the
-reported p95 up or down. A browser clock that is off also distorts it. The guide asks for measured
-numbers, so the measurement should not depend on client-supplied timestamps.
+**Where:** `saas/server.py`, `/api/render-ack` accepts `event_ts_ms` and `render_ms` from the browser
+and records the difference.
 
-## B12. "Heal all" heals every tenant (Low, demo only)
+**What happens:** any logged-in user, including a viewer, can post invented values and move the
+reported p95 either way; a browser clock that is off also distorts it.
 
-**Where:** `simulator/stream.py:203`. With no target host, heal clears the faults of every host on
-every collector.
+**Plan:** make the server-side number authoritative: record server send time minus event time when an
+overview response first includes a point. Keep the browser acknowledgement only as an extra sample,
+and accept it only if the event timestamp is one the server actually sent to that session and the
+render time is within 2 s of the server's clock.
+**Test:** a fabricated render-ack does not change the reported p95; the server-side p95 is reported
+even with no browser open.
 
-**What happens:** pressing "Heal all" on the Globex console also ends a scenario running for Acme.
-This only affects the simulator, but it can wreck a live demo that runs two scenarios at once.
+### B18. Adapter mis-maps `name` / `value`, and no percentage is range-checked (Medium)
 
-**Status: fixed** (commit "Fix B12"). Heal without a host now clears only the hosts of the collector
-that asked, including their "source goes silent" state. Test: `tests/test_simulator.py` (healing
-collector A wiped collector B's CPU spike before the change; it is left running now).
+**Where:** `tools/stream_adapter.py`, `extract_metrics()`, takes a metric name from `metric_name`,
+`metric` **or** `name` and pairs it with `value`. Neither the collector nor the SaaS value checks
+reject percentages above 100.
 
-## B13. Collector CPU in heartbeats measured over the wrong interval (Low)
+**Evidence:** `--dry-run` on `{"name": "memory", "value": 512, "unit": "MB"}` gives `{"mem_pct": 512.0}`,
+and that value would pass every later check and show as a critical fault.
 
-**Where:** `collector/collector.py:497`. `self_stats()` resets the CPU sample every time it runs, and
-both the console (every second) and the heartbeat (every 5 s) call it.
+**Plan:** use `name` as a metric name only when it is paired with `metric_value` or a mapping file says
+so; read a `unit` field and refuse percentage metrics whose unit is not a percentage. Add range checks
+(0-100 for percentage metrics, 0/1 for `reachable` and `svc_up`, non-negative elsewhere) in the
+collector before aggregation and in the SaaS value validation added for B2.
+**Test:** the record above produces no `mem_pct`; `{"metric_name": "cpu", "metric_value": 42}` still
+maps; a payload with `cpu_pct` 512 is rejected by the SaaS with a clear reason.
 
-**What happens:** while a console is open, the heartbeat reports CPU over the last ~1 s instead of the
-last 5 s, so the fleet view shows a noisier, partly misleading number.
+### B9. Collector sequence numbers can restart (Low)
 
-## B14. Unbounded in-memory caches (Low)
+**Where:** `collector/collector.py` starts the counter from `MAX(seq)` in the outbox at startup;
+retention deletes delivered rows older than 24 hours.
 
-**Where:** `saas/aiops.py:108-114` (`series`, `latest`, `cls`, `health`), `saas/server.py:493`
-(`SESSIONS`), and the chaos-mode `held` dict in `collector/collector.py:456`.
+**What happens:** if a collector runs for more than 24 hours **without any telemetry**, every numbered
+outbox row ages out (heartbeat rows have no sequence number). If it is then restarted, numbering starts
+again at 1, so the SaaS flags new payloads as out of order and computes a wrong gap count. Deleting
+the collector's data directory has the same effect. (Originally reported as "idle or stopped" and
+Medium; stopping is safe because the counter is read before retention runs. Corrected to Low.)
 
-**What happens:** entries are added for every source, alert, session and held payload and never removed.
-That is fine for a demo, but over a long run with many sources or logins memory only grows.
+**Plan:** keep the counter in a `state` table in the collector's database, updated in the same
+transaction as the outbox insert, and never let retention delete the newest delivered row.
+**Test:** delete all delivered rows, restart the collector, send one payload; its sequence continues
+from the old value and the SaaS reports 0 gaps.
 
-## B15. SaaS forgets sequence state on restart (Low)
+### B21. A rejected payload's readings stay in the engine's memory (Low)
 
-**Where:** `saas/server.py:52`, `self.max_seq = {}` lives in memory only.
+**Where:** `saas/server.py`, `_store_one()` runs inside a savepoint (B2 fix), but `Engine.on_point()`
+updates in-memory state (`latest`, detector series, open-alert keys) as it goes, and a rollback does
+not undo that.
+
+**Evidence:** a payload whose processing raised after its CPU reading was handled: the payload was
+rejected and the database held 0 rows for the source, but the engine still reported CPU 77% as that
+source's latest value.
+
+**Impact:** only after an unexpected processing error. The dashboard can then show a value that was
+never stored, and the reading can enter a baseline.
+
+**Plan:** validate and compute everything for a payload first, then apply the in-memory changes only
+after the savepoint commits; or snapshot the touched series and restore them on rollback. The first
+is simpler: collect the points, write them, and call `on_point` after `RELEASE`.
+**Test:** the reproduction above leaves `engine.latest` without the rejected reading.
+
+### B13. Collector CPU in heartbeats measured over the wrong interval (Low)
+
+**Where:** `collector/collector.py`, `self_stats()` resets the CPU sample every time it runs; both the
+console (every second) and the heartbeat (every 5 s) call it.
+
+**What happens:** while a console is open, the heartbeat reports CPU over the last ~1 s instead of 5 s,
+so the fleet view shows a noisier number.
+
+**Plan:** separate CPU samplers for the heartbeat and the console.
+**Test:** heartbeat CPU stays the same whether or not the console is polling.
+
+### B14. Unbounded in-memory caches (Low)
+
+**Where:** `saas/aiops.py` (`series`, `latest`, `cls`, `health`), `saas/server.py` (`SESSIONS`), and the
+chaos-mode `held` dict in `collector/collector.py`.
+
+**What happens:** entries are added for every source, alert, session and held payload and never
+removed. Fine for a demo; memory only grows over a long run.
+
+**Plan:** evict detector series and latest values not updated for an hour; drop classification entries
+when their alert resolves; sweep expired sessions on each login; drop `held` entries once delivered.
+**Test:** after a source has been silent for over an hour (simulated clock), its entries are gone.
+
+### B15. SaaS forgets sequence state on restart (Low)
+
+**Where:** `saas/server.py`, `self.max_seq = {}` lives in memory only.
 
 **What happens:** after a SaaS restart, the first payloads from each collector are never flagged as out
-of order even when they are, so the out-of-order counter undercounts.
+of order even when they are, so the counter undercounts.
 
-## B16. Misleading "0.00s" in the validation report (Low)
+**Plan:** load `MAX(seq)` per collector from the payloads table at startup.
+**Test:** restart the app object and send an older sequence number; it is flagged out of order.
 
-**Where:** `tools/verify.py:410` prints `browser render-ack p95 0.00s (n=0)` when no browser was open.
+### B17. Digest mismatch retried forever (Low)
 
-**What happens:** the report looks as if a real render latency of zero was measured. It should say
-"not measured" when n is 0.
+**Where:** `collector/collector.py`, `send_once()`: on an acknowledgement digest mismatch the payload
+stays pending and is resent.
 
-**Status: fixed** (commit "Fix B16"). The report now says "browser render-ack not measured (no browser
-open)" when there are no samples. Test: `tests/test_verify_report.py`.
+**What happens:** if the digests ever disagree permanently (for example a serialisation change after an
+upgrade), the payload loops forever and only a counter shows it.
 
-## B17. Digest mismatch retried forever (Low)
+**Plan:** after 5 mismatches, mark the payload `ack_mismatch`, stop resending, report it in heartbeat
+stats and the local audit, and show it on the collector console and the fleet view.
+**Test:** against a stub that always returns a wrong digest, the payload stops looping after 5 tries
+and is reported.
 
-**Where:** `collector/collector.py:421`. On an acknowledgement digest mismatch the payload stays pending
-and is resent.
+---
 
-**What happens:** if the digests ever disagree permanently (for example a serialisation difference
-after an upgrade), the payload loops forever. Nothing escalates, apart from a counter.
+## Fixed bugs
 
-## B18. Adapter can mis-map `name` / `value` fields (Low)
-
-**Where:** `tools/stream_adapter.py:143` looks for a metric name in `metric_name`, `metric` **or**
-`name`, then pairs it with `value`.
-
-**What happens:** in many formats `name` is just a label, not a metric name. A record such as
-`{"name": "memory", "value": 512, "unit": "MB"}` is read as memory at 512%, which immediately looks
-like a critical fault. The fallback to `name` is too loose, and units are ignored.
-
-**Confirmed on re-check** (`--dry-run`): that record maps to `{"mem_pct": 512.0}`. It is also worse than
-first written: nothing downstream rejects a percentage above 100, neither the collector nor the SaaS
-value checks added for B2, so the impossible value reaches the dashboard. The fix should add range
-checks for percentage metrics as well as tightening the mapping.
-
-## B19. DLP blocks payloads whose ID looks like a card number (Medium)
-
-**Found:** after the original report, by the full end-to-end run on the Phase 1 code (16/17: the
-outage check reported one sequence gap).
-
-**Where:** `common/policy.py`, `dlp_scan()`. The card-number pattern allows a dash between digits,
-and payload IDs are UUIDs.
-
-**What happens:** a UUID such as `f6411f1b-2217-40b5-9244-652875177458` contains `9244-652875177458`,
-which is 16 digits and passes the Luhn check. The collector's DLP blocked the real payload and sent an
-empty marker with the same ID to keep the sequence unbroken; the SaaS's DLP then rejected the marker
-for the same reason. That window of data was lost and the SaaS showed a sequence gap.
-
-**Reproduced:** collector outbox row `seq 135, status rejected, note "DLP: ['credit_card']"` with zero
-metrics and events; `dlp_scan()` on its body returned `['credit_card']`; 22 of 200,000 random UUIDs
-were flagged (0.011%, about one payload every 50 minutes with three collectors). Earlier runs passed
-by luck.
-
-**Status: fixed** (commit "Fix B19"). UUIDs are masked before the DLP patterns run; they are generated
-by the system, never copied from user content. Tests in `tests/test_policy.py`: the exact lost ID
-and 50,000 random UUIDs are no longer flagged, while card numbers with and without dashes in free
-text still are.
+| ID | Severity | Bug | Fixed in | Proof |
+|---|---|---|---|---|
+| B1 | Critical | One idle TCP connection to the TLS port froze all collector ingest | `bd9bb4e` | Handshake moved to the connection thread with a timeout. Before: requests timed out after 6 s while an idle client was connected; after: answered in 0.01 s. `tests/test_tls_server.py` and a `verify.py` check |
+| B2 | High | One malformed payload failed its whole batch, and the collector retried it forever | `6509154`, `e5c20d3` | Value validation, a savepoint per payload, and the collector isolates a refused payload. Before: the valid payload in the batch was lost; after: stored, with the bad one rejected alone. The follow-up restored throughput (93.7 payloads/s, same as before the fix). `tests/test_poison_batch.py` |
+| B3 | High | Future-dated events never reached the SaaS | `45287cd` | Readings more than 5 s ahead are re-stamped and raise a "Clock skew" incident; offset-less timestamps use the site's timezone (but see B20). Before: the host was invisible; after: visible, with an explanation. `tests/test_clock_skew.py` |
+| B5 | Medium | Proof-panel search treated `%` and `_` as wildcards and could report false leaks | `e29210e` | Terms escaped. Before: `%` gave 988 false outbound matches; after: 0. (Originally rated High with wrong `_` evidence; corrected.) `tests/test_search.py` |
+| B6 | Medium | A source reporting only bandwidth showed as Poor, "no data" | `4b0ff76` | Freshness counts every metric. Before: Poor; after: Excellent, no stale alert. `tests/test_freshness.py` |
+| B12 | Low | "Heal all" on one console healed every tenant's simulated faults | `ccdf2ee` | Heal is scoped to the requesting collector. `tests/test_simulator.py` |
+| B16 | Low | Validation report printed "render-ack p95 0.00s" with no samples | `c372be4` | Now says "not measured (no browser open)". `tests/test_verify_report.py` |
+| B19 | Medium | About 1 in 9,000 payloads was blocked by DLP because its UUID looked like a card number | `20e1a84` | Found by the end-to-end run (16/17). UUIDs are masked before scanning; real card numbers are still caught. Before: one lost window and a sequence gap; after: 17/17. Tests in `tests/test_policy.py` |
