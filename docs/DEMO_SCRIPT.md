@@ -13,7 +13,7 @@ The judges' key question has three parts, and each is answered live:
 | # | Scenario | Do this | Show this |
 |---|---|---|---|
 | 1 | Raw log contains a secret | Collector: target `web-01` → **Secret in raw log** | Collector raw view: password, bearer token, API key, AWS key highlighted red on the left, `[REDACTED:…]` on the right. Egress panel: newest payload has only a `security.secret_in_log` event with a count and the credential *types*. SaaS: incident "Credential exposed in checkout-web logs" → manual rotation runbook. Search `Sup3rS3cret!` on both sides. |
-| 2 | Collector loses SaaS | Collector: **Simulate SaaS outage** | Collector: link "disconnected - buffering locally", buffer depth climbs, payloads stay `pending`. SaaS: collector → Poor about 30 s after the last heartbeat; its sources go Fair (stale), then Poor (no data), never showing old values as current. Click **Restore**: the backlog drains in about 2 s. Performance tab: sequence gaps 0, no duplicates; offline detection measured. |
+| 2 | Collector loses SaaS | Collector: **Simulate SaaS outage** | Collector: link "disconnected - buffering locally", buffer depth climbs, payloads stay `pending`. SaaS: collector → Poor about 30 s after the last heartbeat; its sources go Fair (stale), then Poor (no data), never showing old values as current. Click **Restore**: the backlog drains in a few seconds. Performance tab: sequence gaps 0, no duplicates; offline detection measured. |
 | 3 | Repeated failed logins | Collector: target `api-01` → **Repeated failed logins** | Collector "Local security findings": accounts and attacker IPs (local only). SaaS: "Credential attack against checkout-api" with counts, distinct-account count and pattern (spraying vs brute force). No usernames or IPs anywhere on SaaS. Recommendation: temporary block, executed by the collector, which alone knows the IPs. |
 | 4 | Network latency rises | Console :9102 → **Site latency + loss** | SaaS: one incident "Network path degradation at fra-cloud": every affected source, severity, latency vs baseline with z-score, packet loss; Fleet tab charts show the trend with the alert window shaded. |
 | 5 | CPU or memory deviates | Target `db-01` → **CPU off baseline** (or **Memory leak**) | Incident lists the CPU value vs the median ± spread baseline, z-score, onset, peer check ("0/0 peers deviate → isolated, not a usage spike"), confidence factors, and the safe read-only "capture process snapshot" action. The memory leak shows trend %/min → rolling restart. |
@@ -71,12 +71,33 @@ every payload to its outbox, retries with capped backoff, and replays in sequenc
 The SaaS marks it offline within 30 s and its sources stale, not healthy.
 
 **How do you avoid losing or duplicating metadata after reconnect?** At-least-once delivery with UUID
-payload IDs as a primary key (duplicates are acknowledged and ignored), contiguous per-collector
-sequence numbers for gap detection, and event-time merge of metric points.
+payload IDs as a primary key (identical retries are acknowledged and ignored), contiguous
+per-collector sequence numbers for gap detection, and event-time merge of metric points. A reused
+ID with *different* content is rejected with 409 and audited, and the collector only marks a payload
+delivered when the SaaS echoes the SHA-256 of the exact bytes it sent.
 
-**How would you scale?** Partition by region, then tenant, then source. Stateless ingest behind
-regional load balancers, Kafka per region, a time-series store, and AIOps workers sharded by series
-(the detector is per series). See ARCHITECTURE §8.
+**How would you scale?** Measured first: one process handles about 107 payloads/s (3,900 points/s),
+which is roughly 100 collectors at p95 ~1 s with zero loss (`tools/loadtest.py`, docs/LOADTEST.md).
+Beyond that, partition by region, then tenant, then source: stateless ingest behind regional load
+balancers, Kafka per region, a time-series store, and AIOps workers sharded by series (the detector
+is per series). See ARCHITECTURE §8.
+
+**Where does the confidence percentage come from?** Two parts, both shown on screen. The rule-based
+factors (pattern base, corroborating signals, deviation strength, persistence, dependency position)
+are a transparent heuristic. Next to them is the measured detector quality from 60 labelled trials
+with extra noise and 800+ harmless blips: precision 95%, recall 96%, 0.5 false alarms per host-hour
+(`tools/benchmark.py`, docs/BENCHMARK.md). We say plainly that the benchmark uses our own simulator.
+
+**Will it work with our stream?** `tools/stream_adapter.py` maps unknown field names, nested or
+flat metrics, name/value pairs, ISO or epoch timestamps and ratio values onto the collector input,
+and replays at the original pace. The end-to-end verification feeds it a foreign-format file
+(epoch-ms `timestamp`, `device`, `cpu_ratio`, string booleans, an unseen host) and checks that the
+fault is detected and explained and that the hostname never reaches the SaaS.
+
+**Is the dashboard secure?** Login with PBKDF2 hashes, HttpOnly SameSite cookies, admin and viewer
+roles, Host-header allow-list against DNS rebinding, Origin checks on writes, and a strict
+Content-Security-Policy with no inline script. It is still plain HTTP on localhost; production would
+add TLS and SSO.
 
 **Regions, residency, UTC, out-of-order?** Collectors discover their tenant's regional endpoint. The
 SaaS refuses other regions with 421, and each region has its own store. All timestamps are UTC with

@@ -1,5 +1,7 @@
 # Head-to-head: this build vs `testsub-1`
 
+> Note (2026-11-20, later the same day): the other projects were removed from this workspace after this comparison. They remain at github.com/Sherwin0095/testsub-1 and github.com/MishaelJulian/aegisops-demo. The scores describe the builds as they were when compared; this build has since added 409 conflict detection, ack digest checks, CSP and Host/Origin checks, an organizer-stream adapter, unit tests and CI, a measured detector benchmark and a load test.
+
 Both were run side by side on 2026-11-20 and exercised in Chrome with the same scenarios (secret in
 log, failed logins, correlated CPU + network fault, remediation), plus scripted probes against both
 live APIs. "Mine" = this repository (Python). "testsub" = `testsub-1/` (Node.js, "Cicada").

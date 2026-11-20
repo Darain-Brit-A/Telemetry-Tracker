@@ -11,7 +11,7 @@
                                  ▼ ▼   │ 1 collect          │    │   │ authenticate (HMAC, skew)    │
                                        │ 2 redact (secrets, │    │   │ residency check (421)        │
    raw store (SQLite, retention) ◄─────┤   PII) + pseudonym │    │   │ allow-list + DLP (reject)    │
-   raw logs, auth users/IPs, secrets   │ 3 aggregate (2s    │    │   │ idempotent insert (payload_id)│
+   raw logs, auth users/IPs, secrets   │ 3 aggregate (1s    │    │   │ idempotent insert (payload_id)│
    NEVER leave                         │   event-time win.) │    │   │ event-time merge             │
                                        │ 4 analyze locally  │    │   └──────────────┬───────────────┘
                                        │   auth bursts,     │    │                  ▼
@@ -42,7 +42,7 @@ Every network hop:
 
 | Stays local (collector only) | Leaves (allow-listed, `common/data_policy.json`) |
 |---|---|
-| raw log lines, payloads, stack traces | metric aggregates per 2 s window: `avg,min,max,n` for 9 named metrics |
+| raw log lines, payloads, stack traces | metric aggregates per 1 s window: `avg,min,max,n` for 9 named metrics |
 | secrets (passwords, tokens, keys, JWTs, connection strings) | event `category` + `severity` + `count` from a fixed list of 6 categories |
 | usernames, source IPs of auth attempts | `context`: a collector-generated template sentence (never raw text) |
 | hostnames (→ HMAC pseudonym `src-xxxxxxxxxx`, key never leaves) | `fingerprint`: hash of a log *template* (e.g. `fp-1a2b3c4d`) |
@@ -105,13 +105,19 @@ dashboard can render UTC, source-local or viewer-local time.
 * Auditable transfers: every payload's exact bytes, SHA-256, size, allow-list removals, DLP result,
   attempts and delivery time are kept in the egress log. The SaaS stores the hash of what it received.
 * Remediation: pull-based, policy-checked, human-approved, simulation-only, reversible, audited on both tiers.
+* Integrity of delivery: a payload ID that arrives again with different bytes is rejected (409) and
+  audited instead of being treated as a harmless retry. Every acknowledgement carries the SHA-256 the
+  SaaS computed, and the collector only marks a payload delivered when it matches its own.
+* Browser-facing consoles: Host-header allow-list (defeats DNS rebinding against the loopback
+  consoles), Origin check on every write, strict Content-Security-Policy with no inline script,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
 
 ## 6. AIOps approach
 
 | Stage | Implementation |
 |---|---|
 | Baseline | per (tenant, source, metric): rolling median + MAD over the last 90 *normal* windows (≥ 15 before arming); anomalous points are excluded so a sustained fault cannot become the new normal |
-| Detect | robust z = (x − median) / max(1.4826·MAD, metric floor); open when z ≥ 4 for 3 consecutive windows (persistence filter), clear after 3 normal windows; static thresholds as a backstop (Poor = immediate) |
+| Detect | robust z = (x − median) / max(1.4826·MAD, metric floor); 1 s windows; open when z ≥ 4 for 3 consecutive windows (persistence filter), clear after 5 normal windows; static thresholds as a backstop (Poor after 2 windows, Fair after 3, so a single 1 s blip never pages). Measured on 60 labelled trials: precision 95%, recall 96%, 0.5 false alarms per host-hour (docs/BENCHMARK.md) |
 | Normal spike vs anomaly | peer comparison: if ≥ 60 % of same-role peers deviate together **and** inbound traffic rises, the incident is classified *demand* (severity low, recommend scale-out); peers together without traffic = suspected fleet-wide change; alone = isolated fault |
 | Correlate | an alert joins an open incident if it relates to an **active** alert there: same source, service dependency at the same site, network signals at a shared site, same collector, or same demand signal on the same role. Repeats of an open alert key are counted, not re-raised |
 | Root cause | score = 0.3·earliest onset + 0.4·upstream-of-other-affected-services + 0.2·severity + 0.1·signal count |
@@ -139,5 +145,11 @@ Every state change is written to the health history with UTC time, previous stat
 | collector polling for commands | long-poll / gRPC stream; mTLS per collector with short-lived certs from enrolment |
 | config file registry | control-plane DB with tenant → region pinning; replication between regions only via an explicit policy record |
 
-Payloads are about 1–4 KB per 2 s window for 4 hosts, so one collector sends about 1 KB/s. 10 000
-collectors would send about 10 MB/s per region, well within a single Kafka partition set.
+Measured today (docs/LOADTEST.md, real TLS + HMAC, full AIOps path, one process): about 107
+payloads/s or 3,900 metric points/s, which is roughly 100 collectors at one payload per second with
+p95 request latency around 1 s and zero loss. Past that, latency grows rather than data being
+dropped, because collectors hold payloads until acknowledged. Batches are written in one SQLite
+transaction each, and the health tick keeps open alerts in memory so it does not query per source.
+
+A payload is about 3–5 KB per 1 s window for 4 hosts. 10,000 collectors would send about 40 MB/s per
+region, which is why the production path moves ingest behind a queue and shards the detectors.
