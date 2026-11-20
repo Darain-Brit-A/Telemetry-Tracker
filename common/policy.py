@@ -11,6 +11,8 @@ import json
 import os
 import re
 
+from common.util import parse_iso   # module level: an import inside the hot path takes the import lock
+
 POLICY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_policy.json")
 
 
@@ -158,7 +160,6 @@ def _is_iso(v):
     if not isinstance(v, str) or len(v) > 40:
         return False
     try:
-        from common.util import parse_iso
         parse_iso(v)
         return True
     except (ValueError, TypeError):
