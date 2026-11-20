@@ -26,7 +26,7 @@ The fix plan is in [plan.md](plan.md).
 | B13 | Low | Collector CPU in heartbeats is measured over the wrong interval | Code reading | Open |
 | B14 | Low | Memory grows without limit in several in-process caches | Code reading | Open |
 | B15 | Low | SaaS forgets per-collector sequence state on restart | Code reading | Open |
-| B16 | Low | Validation report prints "render-ack p95 0.00s" when there were no samples | Code reading | Open |
+| B16 | Low | Validation report prints "render-ack p95 0.00s" when there were no samples | Code reading | Fixed |
 | B17 | Low | An acknowledgement digest mismatch is retried forever with no escalation | Code reading | Open |
 | B18 | Low | Stream adapter can map a record's `name` / `value` fields as a metric by mistake | Code reading | Open |
 
@@ -258,6 +258,9 @@ of order even when they are, so the out-of-order counter undercounts.
 
 **What happens:** the report looks as if a real render latency of zero was measured. It should say
 "not measured" when n is 0.
+
+**Status: fixed** (commit "Fix B16"). The report now says "browser render-ack not measured (no browser
+open)" when there are no samples. Test: `tests/test_verify_report.py`.
 
 ## B17. Digest mismatch retried forever (Low)
 
