@@ -45,12 +45,33 @@ TENANTS = {
                                           ["db-01", "db", "billing-db"], ["fw-01", "network", "edge-firewall"]]},
         },
     },
+    # Real, live data: official air-quality monitors in Bengaluru (CPCB / KSPCB) read through the OpenAQ v3
+    # API by tools/openaq_poller.py. Not simulated. Region ap-south keeps Indian data in the Mumbai store.
+    "cityair": {
+        "name": "Bengaluru Air Quality (live, OpenAQ)",
+        "region": "ap-south",
+        "dependencies": {},
+        "live": "openaq",
+        "collectors": {
+            "col-air-blr": {"site": "blr-openaq", "tz": "Asia/Kolkata", "ui_port": 9104, "syslog_port": 5144,
+                            "simulated": False,
+                            # host, role, service (shown as the monitor's name), OpenAQ location id
+                            "hosts": [["silk-board", "air-monitor", "Silk Board", 6975],
+                                      ["btm-layout", "air-monitor", "BTM Layout", 5548],
+                                      ["peenya", "air-monitor", "Peenya", 5607],
+                                      ["jayanagar", "air-monitor", "Jayanagar 5th Block", 6973],
+                                      ["bapuji-nagar", "air-monitor", "Bapuji Nagar", 6974],
+                                      ["hebbal", "air-monitor", "Hebbal", 6984]]},
+        },
+    },
 }
 
 USERS = [  # demo-only credentials (also listed in README)
     ("acme-admin", "acme-admin-demo", "acme", "admin"),
     ("acme-viewer", "acme-viewer-demo", "acme", "viewer"),
     ("globex-admin", "globex-admin-demo", "globex", "admin"),
+    ("cityair-admin", "cityair-admin-demo", "cityair", "admin"),
+    ("cityair-viewer", "cityair-viewer-demo", "cityair", "viewer"),
 ]
 
 DEFAULT_THRESHOLDS = {
@@ -61,9 +82,16 @@ DEFAULT_THRESHOLDS = {
     "latency_ms": [60, 120, 300],
     "packet_loss_pct": [0.5, 2, 5],
 }
+# Air-quality limits from India's CPCB National AQI bands (micrograms per cubic metre):
+# Excellent = Good, Good = Satisfactory, Fair = Moderate, Poor = Poor or worse
+AIR_THRESHOLDS = {
+    "pm25_ugm3": [30, 60, 90],
+    "pm10_ugm3": [50, 100, 250],
+    "no2_ugm3": [40, 80, 180],
+}
 HEALTH_SETTINGS = {"stale_after_s": 10, "no_data_after_s": 30, "collector_offline_after_s": 30}
 
-SETUP_VERSION = 2          # bump when setup adds something existing configs need (run_all re-runs setup)
+SETUP_VERSION = 3          # bump when setup adds something existing configs need (run_all re-runs setup)
 SAAS_DASH_PORT = 8080
 SAAS_INGEST_PORT = 8443
 SIM_PORT = 9000
@@ -175,7 +203,8 @@ def main():
 
     for tid, t in TENANTS.items():
         registry["tenants"][tid] = {"name": t["name"], "region": t["region"], "dependencies": t["dependencies"],
-                                    "thresholds": DEFAULT_THRESHOLDS, "health": HEALTH_SETTINGS}
+                                    "thresholds": dict(AIR_THRESHOLDS if t.get("live") else DEFAULT_THRESHOLDS),
+                                    "health": dict(HEALTH_SETTINGS)}
         for cid, c in t["collectors"].items():
             secret = old_secrets.get(cid) or secrets.token_hex(32)
             registry["collectors"][cid] = {"tenant_id": tid, "secret": secret, "site": c["site"]}
@@ -203,9 +232,12 @@ def main():
                 "window_s": 1,
                 "raw_retention_min": 60,
                 "simulator_url": f"http://127.0.0.1:{SIM_PORT}",
-                "hosts": {h: {"role": r, "service": s} for h, r, s in c["hosts"]},
+                "hosts": {h[0]: {"role": h[1], "service": h[2]} for h in c["hosts"]},
                 "auth_burst_threshold": 5,
+                **({"openaq_locations": {h[0]: h[3] for h in c["hosts"]}} if t.get("live") == "openaq" else {}),
             })
+            if c.get("simulated") is False:
+                continue                     # live sources feed this collector, not the simulator
             sim["collectors"][cid] = {"ingest": f"http://127.0.0.1:{c['ui_port']}/ingest", "ingest_token": token,
                                       "syslog_port": c["syslog_port"], "site": c["site"], "tz": c["tz"],
                                       "tenant": tid, "hosts": c["hosts"]}

@@ -44,7 +44,7 @@ def main():
     if os.path.exists(reg_path):
         with open(reg_path, encoding="utf-8") as f:
             reg = json.load(f)
-    if reg.get("setup_version", 0) < 2:
+    if reg.get("setup_version", 0) < 3:
         # first run, or a config from an older setup (before mutual TLS / ingest tokens):
         # setup keeps existing secrets and adds what is missing
         subprocess.run([PY, os.path.join(ROOT, "setup_env.py")], check=True)
@@ -55,6 +55,9 @@ def main():
     plan = [("saas", [PY, "-u", os.path.join(ROOT, "saas", "server.py")])]
     plan += [(c, [PY, "-u", os.path.join(ROOT, "collector", "collector.py"), "--config", c]) for c in cols]
     plan += [("simulator", [PY, "-u", os.path.join(ROOT, "simulator", "stream.py")])]
+    # live air-quality feed (real data, OpenAQ) when an API key is configured; see tools/openaq_poller.py
+    if os.environ.get("AIOPS_OPENAQ_API_KEY") or os.path.exists(os.path.join(ROOT, "config", "pollution.json")):
+        plan += [("openaq", [PY, "-u", os.path.join(ROOT, "tools", "openaq_poller.py")])]
     procs = []
     for name, cmd in plan:
         p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -62,7 +65,11 @@ def main():
         threading.Thread(target=pump, args=(name, p), daemon=True).start()
         time.sleep(0.8 if name == "saas" else 0.3)
     print("\n  SaaS dashboard : http://localhost:8080   (acme-admin / acme-admin-demo, globex-admin / globex-admin-demo)")
-    print("  Collector UIs  : http://127.0.0.1:9101 (acme dc1)  :9102 (acme cloud)  :9103 (globex nyc)")
+    print("  Collector UIs  : http://127.0.0.1:9101 (acme dc1)  :9102 (acme cloud)  :9103 (globex nyc)  :9104 (air, live)")
+    if any(n == "openaq" for n, _ in plan):
+        print("  Live air data  : cityair-admin / cityair-admin-demo  (Bengaluru monitors via OpenAQ)")
+    else:
+        print("  Live air data  : off (set AIOPS_OPENAQ_API_KEY or create config/pollution.json)")
     print("  Baselines need ~40s of telemetry before anomaly detection is armed.  Ctrl+C to stop.\n")
     try:
         while True:

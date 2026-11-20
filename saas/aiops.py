@@ -34,7 +34,25 @@ METRIC_META = {
     "latency_ms": {"label": "Latency", "unit": " ms", "floor": 6.0},
     "packet_loss_pct": {"label": "Packet loss", "unit": "%", "floor": 0.4},
     "bw_in_mbps": {"label": "Inbound traffic", "unit": " Mbps", "floor": 15.0},
+    # live air-quality monitors (OpenAQ): concentrations in micrograms per cubic metre
+    "pm25_ugm3": {"label": "PM2.5", "unit": " µg/m³", "floor": 4.0},
+    "pm10_ugm3": {"label": "PM10", "unit": " µg/m³", "floor": 8.0},
+    "no2_ugm3": {"label": "NO2", "unit": " µg/m³", "floor": 5.0},
 }
+AIR = {"pm25_ugm3", "pm10_ugm3", "no2_ugm3"}
+# India CPCB National AQI sub-index bands (upper bounds), used to name the category in explanations
+CPCB_BANDS = {"pm25_ugm3": (30, 60, 90, 120, 250), "pm10_ugm3": (50, 100, 250, 350, 430),
+              "no2_ugm3": (40, 80, 180, 280, 400)}
+CPCB_NAMES = ("Good", "Satisfactory", "Moderate", "Poor", "Very Poor", "Severe")
+
+
+def cpcb_category(name, value):
+    if name not in CPCB_BANDS:
+        return None
+    for limit, label in zip(CPCB_BANDS[name], CPCB_NAMES):
+        if value <= limit:
+            return label
+    return CPCB_NAMES[-1]
 NETWORK = {"latency_ms", "packet_loss_pct", "network.unreachable"}
 RESOURCE = {"cpu_pct", "mem_pct"}
 MIN_BASELINE = 20
@@ -78,6 +96,9 @@ ACTIONS = {
                               "reversible": False, "automatable": False, "rollback": "n/a - manual runbook"},
     "collector.check_link": {"label": "Check collector host / network path", "risk": "none", "reversible": True,
                              "automatable": False, "rollback": "n/a - manual check"},
+    "notify.air_advisory": {"label": "Issue a public air-quality advisory for the area", "risk": "none",
+                            "reversible": True, "automatable": False,
+                            "rollback": "Withdraw the advisory once readings are back in band"},
     "data.check_agent": {"label": "Check the source's agent / exporter", "risk": "none", "reversible": True,
                          "automatable": False, "rollback": "n/a - manual check"},
 }
@@ -874,6 +895,8 @@ class Engine:
         def fmt(s):
             d = s["detail"]
             if "value" in d:
+                if d.get("baseline") is None:          # threshold breach before a baseline exists
+                    return f"{d['label']} {d['value']}{d['unit']} on {s['service']}"
                 return (f"{d['label']} {d['value']}{d['unit']} (baseline {d.get('baseline')}, z={d.get('z')}) "
                         f"on {s['service']}")
             return f"{s['signal']} on {s['service']}: {d.get('context') or ''}"
@@ -1006,6 +1029,19 @@ class Engine:
             s = next(x for x in sig if x["signal"] == "data.stale")
             return out(f"Telemetry gap from {s['service']}", "The source stopped reporting while its collector is "
                        "online.", "data.check_agent", None, "Missing data is surfaced as a problem, not hidden.", 0.6)
+        air = [x for x in sig if x["signal"] in AIR and "value" in x["detail"]]
+        if air:
+            s = max(air, key=lambda x: x["detail"].get("z") or 0)
+            d = s["detail"]
+            cat = cpcb_category(s["signal"], d["value"])
+            where = sorted({x["service"] for x in air})
+            spread = f"{len(where)} monitors ({', '.join(where[:4])})" if len(where) > 1 else s["service"]
+            return out(f"Air quality: {d['label']} {cat or 'elevated'} at {spread}",
+                       f"{fmt(s)}; CPCB category {cat}" if cat else fmt(s), "notify.air_advisory", s["source_id"],
+                       "Several monitors rising together points to a regional cause (weather, inversion, burning); "
+                       "one monitor alone points to a local source such as traffic or construction near it. "
+                       "Readings come from the official monitor via OpenAQ and are typically 30-90 minutes old.",
+                       0.7 if len(where) > 1 else 0.55)
         s = sig[0]
         return out(f"Investigate {s['signal']} on {s['service']}", fmt(s), "diag.collect_top", s["source_id"],
                    "Read-only diagnostics are always safe.", 0.4)

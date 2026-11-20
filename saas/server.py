@@ -255,7 +255,7 @@ class App:
                 latest = {n: {"ts": iso(v[0]), "value": round(v[1], 2)} for (tt, ss, n), v in eng.latest.items()
                           if tt == t and ss == sid}
                 spark = {}
-                for name in ("cpu_pct", "latency_ms", "mem_pct"):
+                for name in ("cpu_pct", "latency_ms", "mem_pct", "pm25_ugm3", "pm10_ugm3"):
                     spark[name] = [[r[0], round(r[1], 1)] for r in reversed(st.q(
                         "SELECT ts_ms, avg FROM metrics WHERE tenant_id=? AND source_id=? AND name=? "
                         "ORDER BY ts_ms DESC LIMIT 150", (t, sid, name)))]

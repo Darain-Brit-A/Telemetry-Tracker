@@ -190,17 +190,24 @@ function renderFleet() {
     <td>${c.stats.seq_created ?? '–'} → ${c.received} <span class="small ${c.missing ? 'bad' : 'okc'}">${c.missing ? c.missing + ' missing' : 'no gaps'}</span></td></tr>`).join('')}</tbody></table>`;
   $('sources').innerHTML = D.sources.map(s => {
     const L = s.latest, v = k => L[k] ? L[k].value : '–';
+    const kv = isAir(s)
+      ? `<span>PM2.5 ${v('pm25_ugm3')}</span><span>PM10 ${v('pm10_ugm3')}</span><span>NO2 ${v('no2_ugm3')}</span><span>µg/m³</span><span title="minutes since the monitor measured (official monitors report with a delay)">measured ${v('aq_age_min')} min ago</span>`
+      : `<span>CPU ${v('cpu_pct')}%</span><span>Mem ${v('mem_pct')}%</span><span>Disk ${v('disk_pct')}%</span><span>Lat ${v('latency_ms')}ms</span><span>Loss ${v('packet_loss_pct')}%</span><span>In ${v('bw_in_mbps')}Mb</span>`;
     return `<div class="src ${detailSrc === s.source_id ? 'is-selected' : ''}" tabindex="0" data-call="loadDetail" data-arg="${esc(s.source_id)}"><div class="src-head"><b>${esc(s.service)}</b>${pill(s.state || 'Unknown')}</div>
       <div class="small mono mut">${s.source_id} · ${esc(s.role)} · ${esc(s.site)}</div>
-      <div class="kv"><span>CPU ${v('cpu_pct')}%</span><span>Mem ${v('mem_pct')}%</span><span>Disk ${v('disk_pct')}%</span><span>Lat ${v('latency_ms')}ms</span><span>Loss ${v('packet_loss_pct')}%</span><span>In ${v('bw_in_mbps')}Mb</span></div>
+      <div class="kv">${kv}</div>
       <canvas data-spark="${s.source_id}"></canvas><div class="small mut">${esc(s.reason).slice(0, 110)}</div></div>`;
   }).join('');
   const primary = cssVar('--color-primary', '#4263A3'), secondary = cssVar('--status-fair-dot', '#D97706');
   document.querySelectorAll('canvas[data-spark]').forEach(c => {
     const s = D.sources.find(x => x.source_id === c.dataset.spark);
-    drawLines(c, [{pts: s.spark.cpu_pct, color: primary, max: 100}, {pts: s.spark.latency_ms, color: secondary}]);
+    drawLines(c, isAir(s) ? [{pts: s.spark.pm25_ugm3, color: primary}, {pts: s.spark.pm10_ugm3, color: secondary}]
+      : [{pts: s.spark.cpu_pct, color: primary, max: 100}, {pts: s.spark.latency_ms, color: secondary}]);
   });
 }
+
+// a live air-quality monitor (OpenAQ) reports pollutant concentrations instead of host metrics
+function isAir(s) { return !!(s && s.latest && (s.latest.pm25_ugm3 || s.latest.pm10_ugm3 || s.role === 'air-monitor')); }
 
 async function loadDetail(sid, quiet) {
   detailSrc = sid;
@@ -208,7 +215,8 @@ async function loadDetail(sid, quiet) {
   const s = D.sources.find(x => x.source_id === sid) || {};
   $('detail').classList.remove('hidden');
   $('dtitle').innerHTML = `<span>${esc(s.service)} <span class="mono small mut">${sid}</span></span> <span>${pill(s.state || 'Unknown')} <span class="sub">${esc(s.reason)}</span></span>`;
-  const names = ['cpu_pct', 'mem_pct', 'disk_pct', 'latency_ms', 'packet_loss_pct', 'bw_in_mbps'];
+  const names = isAir(s) ? ['pm25_ugm3', 'pm10_ugm3', 'no2_ugm3', 'aq_age_min']
+    : ['cpu_pct', 'mem_pct', 'disk_pct', 'latency_ms', 'packet_loss_pct', 'bw_in_mbps'];
   if (!quiet || !$('dcharts').children.length) $('dcharts').innerHTML = names.map(n => `<div><div class="small"><b>${n}</b> <span class="mut">(event time; shaded = alert)</span></div><canvas id="ch-${n}"></canvas></div>`).join('');
   const primary = cssVar('--color-primary', '#4263A3');
   names.forEach(n => {

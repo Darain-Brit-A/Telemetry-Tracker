@@ -34,6 +34,27 @@ Open:
 
 Wait about 30 s for baselines to arm, then inject scenarios from a collector console.
 
+## Live data: Bengaluru air quality (OpenAQ)
+
+Besides the simulated tenants, the demo can monitor **real, live data**: six official air-quality monitors
+in Bengaluru (CPCB / KSPCB: Silk Board, BTM Layout, Peenya, Jayanagar, Bapuji Nagar, Hebbal), read through
+the [OpenAQ v3 API](https://docs.openaq.org/). Put your OpenAQ API key in `config/pollution.json`
+(`{"api_key": "..."}`; `config/` is git-ignored) or in the `AIOPS_OPENAQ_API_KEY` environment variable, then
+start the demo as usual. `run_all.py` starts `tools/openaq_poller.py` automatically when a key is present.
+
+```powershell
+python run_all.py --fresh
+```
+
+Sign in as `cityair-admin / cityair-admin-demo` (tenant "Bengaluru Air Quality", stored in region ap-south).
+The readings take the same path as any telemetry: poller → collector `/ingest` (bearer token) → allow-list
+and DLP → mutual TLS → SaaS → AI engine. Limits follow India's CPCB AQI bands (PM2.5 30 / 60 / 90, PM10
+50 / 100 / 250, NO2 40 / 80 / 180 µg/m³; can be switched to Learned (ML) per metric), and incidents name the
+CPCB category ("Air quality: PM10 Poor at Hebbal") with a regional-vs-local explanation. NO2 reported in ppb
+is converted to µg/m³. Monitors publish every 15-60 minutes with a delay, so each card shows how old its
+reading is; a monitor with nothing in the last 3 hours shows as no data rather than a stale value.
+`python tools/openaq_poller.py --once` prints one round without sending anything.
+
 ## Feeding the organizer stream
 
 `tools/stream_adapter.py` maps an unknown format onto the collector's input. It accepts JSON-lines,
