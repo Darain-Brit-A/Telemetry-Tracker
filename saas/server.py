@@ -36,6 +36,7 @@ from saas.aiops import ACTIONS, STATES, THRESHOLD_MODES, Engine  # noqa: E402
 from saas.store import Stores  # noqa: E402
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+BASE_CSS = os.path.join(ROOT, "common", "ui", "base.css")
 LOCK = threading.RLock()          # serialises AIOps state mutations
 SESSIONS = {}
 REG_PATH = os.path.join(CONFIG_DIR, "registry.json")
@@ -489,6 +490,9 @@ class DashHandler(Base):
         path = urllib.parse.urlsplit(self.path).path
         if path == "/" or path == "/index.html":
             path = "/index.html"
+        if path == "/base.css":                 # design system shared with the collector console
+            with open(BASE_CSS, "rb") as fh:
+                return self.send(200, fh.read(), "text/css; charset=utf-8")
         if not path.startswith("/api/"):
             f = os.path.normpath(os.path.join(STATIC, path.lstrip("/")))
             if not f.startswith(STATIC) or not os.path.isfile(f):

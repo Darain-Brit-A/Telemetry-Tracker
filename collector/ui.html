@@ -4,353 +4,125 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Local Collector</title>
-<style>
-/* Deep Forest Botanical companion to the Humming Drops SaaS palette:
- * Deep evergreen ground (#07241A / #0A261D), raised forest surfaces (#0F392B),
- * vibrant sprout green (#22C55E), warm citrus (#F59E0B), berry alert (#F43F5E),
- * matching 20px cards and pill controls for side-by-side Tier 1 vs Tier 2 demos.
- */
-:root {
-  --bg: #07241A;
-  --surface: #0F392B;
-  --surface-2: #144A37;
-  --border: #1C5A44;
-  --border-strong: #2A755A;
-  --text: #F0FDF4;
-  --mut: #9BC4B1;
-  --acc: #22C55E;
-  --acc-deep: #15803D;
-  --warn: #F59E0B;
-  --warn-bg: rgba(245, 158, 11, 0.14);
-  --bad: #F43F5E;
-  --bad-bg: rgba(244, 63, 94, 0.16);
-  --secret: #FDA4AF;
-  --radius-card: 20px;
-  --radius-ctl: 12px;
-  --radius-pill: 9999px;
-  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
-  --font-display: "Plus Jakarta Sans", "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: radial-gradient(circle at top right, #0D3528 0%, var(--bg) 55%);
-  color: var(--text);
-  font: 13.5px/1.5 var(--font-sans);
-  font-variant-numeric: tabular-nums;
-  -webkit-font-smoothing: antialiased;
-}
-
-header {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px 18px;
-  align-items: center;
-  background: rgba(10, 38, 29, 0.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-.badge {
-  background: var(--warn-bg);
-  color: #FCD34D;
-  border: 1px solid rgba(245, 158, 11, 0.4);
-  padding: 4px 12px;
-  border-radius: var(--radius-pill);
-  font-weight: 700;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
-
-h1 {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0;
-}
-
-h2 {
-  font-family: var(--font-display);
-  font-size: 15.5px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  margin: 0 0 10px;
-  color: var(--text);
-}
-
-.kv {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  color: var(--mut);
-  font-size: 12.5px;
-}
-
-.kv b { color: var(--text); font-weight: 600; }
-
-main {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-  padding: 20px 22px 32px;
-  max-width: 1480px;
-  margin: 0 auto;
-}
-
-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.25);
-  padding: 18px 20px;
-  min-width: 0;
-}
-
-.full { grid-column: 1 / -1; }
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12.5px;
-}
-
-td, th {
-  padding: 7px 8px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  vertical-align: top;
-}
-
-th {
-  color: var(--mut);
-  font-weight: 600;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: rgba(7, 36, 26, 0.45);
-}
-
-tbody tr:last-child td { border-bottom: 0; }
-
-code, pre, .mono {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-}
-
-pre {
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: #061D15;
-  border: 1px solid var(--border);
-  padding: 12px 14px;
-  border-radius: 14px;
-  max-height: 360px;
-  overflow: auto;
-  margin: 8px 0 0;
-}
-
-.sec {
-  color: var(--secret);
-  background: var(--bad-bg);
-  border-radius: 4px;
-  padding: 0 4px;
-}
-
-.red { color: var(--acc); font-weight: 600; }
-.raw-hit { background: rgba(244, 63, 94, 0.12); }
-
-button {
-  background: var(--surface-2);
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-ctl);
-  padding: 7px 12px;
-  cursor: pointer;
-  font: 600 12.5px/1.25 var(--font-sans);
-  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
-}
-
-button:hover {
-  background: var(--acc-deep);
-  border-color: var(--acc);
-  transform: translateY(-1px);
-}
-
-button.on {
-  background: rgba(184, 29, 67, 0.35);
-  border-color: var(--bad);
-  color: #FFE4E6;
-}
-
-.btns {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-select, input[type="number"], input:not([type]) {
-  background: #061D15;
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-ctl);
-  padding: 6px 10px;
-  font: 12.5px/1.3 var(--font-sans);
-}
-
-input:focus, select:focus {
-  outline: none;
-  border-color: var(--acc);
-}
-
-.st {
-  display: inline-block;
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.st.delivered { background: rgba(34, 197, 94, 0.16); color: #86EFAC; border: 1px solid rgba(34, 197, 94, 0.35); }
-.st.pending { background: var(--warn-bg); color: #FCD34D; border: 1px solid rgba(245, 158, 11, 0.35); }
-.st.dropped, .st.rejected, .st.blocked { background: var(--bad-bg); color: #FDA4AF; border: 1px solid rgba(244, 63, 94, 0.4); }
-
-.link-ok { color: var(--acc); }
-.link-bad { color: var(--bad); }
-
-.scroll { max-height: 380px; overflow: auto; }
-.scroll-sm { max-height: 220px; }
-tr.sel { background: var(--surface-2); }
-tr.click { cursor: pointer; transition: background-color 140ms ease; }
-tr.click:hover { background: rgba(20, 74, 55, 0.65); }
-
-.note {
-  color: var(--mut);
-  font-size: 12px;
-  margin: 6px 0 10px;
-}
-
-.split-2 {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  gap: 14px;
-}
-
-.sub-heading { margin-top: 18px; }
-.ctl-gap { margin-top: 12px; }
-.ctl-bot { margin-bottom: 10px; }
-.w-search { width: 260px; }
-.w-ret { width: 72px; }
-
-@media (max-width: 960px) {
-  main, .split-2 { grid-template-columns: 1fr; }
-}
-</style>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/ui.css">
 </head>
 <body>
 <header>
-  <span class="badge">TIER 1 · CUSTOMER ENVIRONMENT · RAW DATA STAYS HERE</span>
-  <h1 id="cid">collector</h1>
-  <div class="kv" id="kv"></div>
+  <div class="brand">
+    <span class="brand-sub">Tier 1: customer environment, raw data stays here</span>
+    <span id="cid" class="brand-name">Collector</span>
+  </div>
+  <div class="hmeta" id="kv"></div>
 </header>
 <main>
-  <section>
-    <h2>Link to SaaS &amp; buffer</h2>
-    <div class="kv" id="link"></div>
-    <div class="btns ctl-gap">
-      <button id="bpart" data-call="toggle" data-arg="partition">Simulate SaaS outage</button>
-      <button id="bchaos" data-call="toggle" data-arg="chaos">Chaos: duplicate + out-of-order delivery</button>
+  <div class="two even">
+    <div class="card">
+      <h2>Link to SaaS and buffer</h2>
+      <div class="facts" id="link"></div>
+      <div class="row actions">
+        <button id="bpart" class="ghost" data-call="toggle" data-arg="partition">Simulate SaaS outage</button>
+        <button id="bchaos" class="ghost" data-call="toggle" data-arg="chaos">Chaos delivery</button>
+      </div>
+      <p class="small mut note">Outage: payloads keep being produced and are buffered in the local outbox (SQLite, survives restarts). On reconnect they are replayed in sequence order and the SaaS de-duplicates them by payload ID. Chaos delivery re-sends duplicates and shuffles the order.</p>
     </div>
-    <p class="note">Outage: payloads keep being produced and are buffered in the local outbox (SQLite, survives restarts). On reconnect they are replayed in sequence order; the SaaS de-duplicates by payload ID.</p>
-  </section>
-  <section>
-    <h2>Inject live scenario (simulated telemetry stream)</h2>
-    <div class="btns ctl-bot">
-      <label class="note" style="margin:0">Target host <select id="host"></select></label>
+    <div class="card">
+      <h2>Inject a scenario <span class="sub">Simulated telemetry stream</span></h2>
+      <div class="row">
+        <label class="field">Target host <select id="host"></select></label>
+      </div>
+      <div class="scen">
+        <button class="sec" data-call="scn" data-arg="secret_in_log">Secret in raw log</button>
+        <button class="sec" data-call="scn" data-arg="failed_logins">Repeated failed logins</button>
+        <button class="sec" data-call="scn" data-arg="cpu_spike">CPU off baseline</button>
+        <button class="sec" data-call="scn" data-arg="mem_leak">Memory leak</button>
+        <button class="sec" data-call="scn" data-arg="latency_rise" data-arg2="site">Site latency and loss</button>
+        <button class="sec" data-call="scn" data-arg="db_saturation" data-arg2="site">Cascading DB saturation</button>
+        <button class="sec" data-call="scn" data-arg="disk_fill">Disk filling</button>
+        <button class="sec" data-call="scn" data-arg="service_down">Service down</button>
+        <button class="sec" data-call="scn" data-arg="fleet_load" data-arg2="site">Fleet-wide load spike</button>
+        <button class="sec" data-call="scn" data-arg="source_silent">Source goes silent</button>
+        <button class="sec" data-call="scn" data-arg="out_of_order" data-arg2="site">Out-of-order events</button>
+        <button class="sec" data-call="scn" data-arg="night_spike">Night spike (seasonal)</button>
+        <button data-call="scn" data-arg="heal" data-arg2="site">Heal all</button>
+      </div>
+      <p class="small mut note" id="scnmsg"></p>
     </div>
-    <div class="btns">
-      <button data-call="scn" data-arg="secret_in_log">Secret in raw log</button>
-      <button data-call="scn" data-arg="failed_logins">Repeated failed logins</button>
-      <button data-call="scn" data-arg="cpu_spike">CPU off baseline</button>
-      <button data-call="scn" data-arg="mem_leak">Memory leak</button>
-      <button data-call="scn" data-arg="latency_rise" data-arg2="site">Site latency + loss</button>
-      <button data-call="scn" data-arg="db_saturation" data-arg2="site">Cascading DB saturation</button>
-      <button data-call="scn" data-arg="disk_fill">Disk filling</button>
-      <button data-call="scn" data-arg="service_down">Service down</button>
-      <button data-call="scn" data-arg="fleet_load" data-arg2="site">Legit fleet-wide load spike</button>
-      <button data-call="scn" data-arg="source_silent">Source goes silent</button>
-      <button data-call="scn" data-arg="out_of_order" data-arg2="site">Out-of-order events</button>
-      <button data-call="scn" data-arg="night_spike">Night spike (seasonal demo)</button>
-      <button data-call="scn" data-arg="heal" data-arg2="site">Heal all</button>
-    </div>
-    <p class="note" id="scnmsg"></p>
-  </section>
+  </div>
 
-  <section class="full">
-    <h2>Raw local events (collector only) — raw vs. redacted</h2>
-    <p class="note">Lines where something was redacted are pinned on top. Left: exactly what arrived from the source, secrets included. Right: the same line after local scrubbing. <b>Neither column is ever transmitted</b>: only aggregates and templated summaries leave.</p>
-    <div class="scroll">
-      <table>
-        <thead><tr><th style="width:94px">UTC</th><th style="width:76px">Host</th><th>Raw (local only)</th><th>Redacted view</th></tr></thead>
+  <div class="card">
+    <h2>Raw local events <span class="sub">Collector only; raw and redacted</span></h2>
+    <p class="small mut">Lines where something was redacted are pinned on top. Left: exactly what arrived from the source, secrets included. Right: the same line after local scrubbing. Neither column is ever transmitted; only aggregates and templated summaries leave.</p>
+    <div class="scroll table-wrap note">
+      <table class="wide">
+        <thead><tr><th class="col-time">Time (UTC)</th><th class="col-host">Host</th><th>Raw (local only)</th><th>Redacted view</th></tr></thead>
         <tbody id="raw"></tbody>
       </table>
     </div>
-  </section>
+  </div>
 
-  <section class="full">
-    <h2>Egress proof panel — exact payload bytes before they leave</h2>
-    <p class="note">Every payload is persisted here before transmission. SHA-256 is computed on the exact bytes sent; the SaaS shows the hash it received so the two can be compared. Click a row to see the body.</p>
-    <div class="btns ctl-bot">
-      <label class="note" style="margin:0"><input type="checkbox" id="showhb"> Show heartbeats</label>
-      <input id="term" class="w-search" placeholder="Search a raw value, e.g. Sup3rS3cret!">
-      <button data-call="search">Prove it stayed local</button>
-      <span id="searchres" class="mono"></span>
-    </div>
-    <div class="split-2">
-      <div class="scroll">
+  <div class="card">
+    <h2>Egress proof <span class="sub">Exact payload bytes before they leave</span></h2>
+    <p class="small mut">Every payload is stored here before it is sent. The SHA-256 is computed on the exact bytes sent; the SaaS shows the hash it received, so the two can be compared. Select a row to see the body.</p>
+    <form id="searchform" class="row note">
+      <label class="field"><input type="checkbox" id="showhb"> Show heartbeats</label>
+      <input id="term" type="search" placeholder="Search a raw value, e.g. Sup3rS3cret!" aria-label="Search for a raw value">
+      <button type="submit">Prove it stayed local</button>
+    </form>
+    <p id="searchres" class="small note"></p>
+    <div class="two even note">
+      <div class="scroll table-wrap">
         <table>
-          <thead><tr><th>Seq</th><th>Kind</th><th>Created UTC</th><th>Bytes</th><th>SHA-256</th><th>Status</th><th>Tries</th></tr></thead>
+          <thead><tr><th class="num">Seq</th><th>Kind</th><th>Created (UTC)</th><th class="num">Bytes</th><th>SHA-256</th><th>Status</th><th class="num">Tries</th></tr></thead>
           <tbody id="eg"></tbody>
         </table>
       </div>
       <div>
-        <div id="egmeta" class="note">Select a payload.</div>
+        <div id="egmeta" class="small mut">Select a payload to see its contents.</div>
         <pre id="egbody"></pre>
       </div>
     </div>
-  </section>
+  </div>
 
-  <section>
-    <h2>Local security findings (identities stay local)</h2>
-    <div class="scroll"><table><tbody id="find"></tbody></table></div>
-  </section>
-  <section>
-    <h2>Pseudonym map (never sent)</h2>
-    <table>
-      <thead><tr><th>Host</th><th>source_id sent to SaaS</th><th>Role</th><th>Service</th></tr></thead>
-      <tbody id="pseudo"></tbody>
-    </table>
-    <h2 class="sub-heading">Retention</h2>
-    <div class="btns">
-      <span class="note" style="margin:0">Raw events kept</span>
-      <input id="ret" type="number" min="1" class="w-ret">
-      <span class="note" style="margin:0">min</span>
-      <button data-call="setRet">Apply</button>
+  <div class="two even">
+    <div class="card">
+      <h2>Local security findings <span class="sub">Identities stay local</span></h2>
+      <div class="scroll table-wrap">
+        <table>
+          <thead><tr><th>Time (UTC)</th><th>Host</th><th>Finding</th></tr></thead>
+          <tbody id="find"></tbody>
+        </table>
+      </div>
     </div>
-  </section>
-  <section class="full">
-    <h2>Local audit log (data-transfer controls &amp; simulated remediation)</h2>
-    <div class="scroll scroll-sm"><table><tbody id="audit"></tbody></table></div>
-  </section>
+    <div class="stack">
+      <div class="card">
+        <h2>Pseudonym map <span class="sub">Never sent</span></h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Host</th><th>ID sent to the SaaS</th><th>Role</th><th>Service</th></tr></thead>
+            <tbody id="pseudo"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Retention</h2>
+        <div class="row">
+          <label class="field">Keep raw events for <input id="ret" type="number" min="1" class="w-ret"> minutes</label>
+          <button data-call="setRet">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Local audit log <span class="sub">Data-transfer controls and simulated remediation</span></h2>
+    <div class="scroll short table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody id="audit"></tbody>
+      </table>
+    </div>
+  </div>
 </main>
 <script src="/ui.js"></script>
 </body>
