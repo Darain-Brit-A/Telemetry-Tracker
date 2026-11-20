@@ -129,7 +129,10 @@ format fed through the adapter and an idle client holding a TLS connection.
 
 ## Security notes
 
-* Collector to SaaS: TLS 1.2+ with a pinned private CA, HMAC-SHA256 request signatures, 300 s replay window.
+* Collector to SaaS: mutual TLS 1.3 (private CA; each collector's certificate pinned by fingerprint),
+  plus HMAC-SHA256 request signatures with a 300 s replay window. Redirects are refused.
+* Local producer to collector: loopback only, bearer token on `/ingest`. Log-template fingerprints and host
+  pseudonyms are keyed with a per-collector salt. Details: [HOST_TO_SAAS_SECURITY.md](HOST_TO_SAAS_SECURITY.md).
 * Dashboard and collector console: Host-header check (DNS rebinding), Origin check on writes,
   strict Content-Security-Policy (no inline script), no framing, no referrer.
 * Dashboard login: PBKDF2-hashed passwords, HttpOnly SameSite session cookie, admin and viewer roles.
@@ -143,9 +146,10 @@ format fed through the adapter and an idle client holding a TLS connection.
   sharded by series (ARCHITECTURE section 8).
 * The dashboard runs plain HTTP on localhost with local users. Production needs TLS, SSO/OIDC and finer RBAC.
 * The collector console has no login. It only listens on 127.0.0.1 and refuses foreign Host and Origin headers.
-* Collector secrets and the CA key live in config files. Production should enrol collectors with
-  mTLS and short-lived certificates kept in an OS keystore or TPM.
-* Baselines are rolling median/MAD without daily or weekly seasonality.
+* Collector secrets, client keys and the demo CA live in config files (the CA key in its own
+  `config/ca-private/` folder that the services never read). Production should issue short-lived
+  certificates from a managed PKI and keep keys in an OS keystore or TPM.
+* Baselines are rolling median/MAD with an hour-of-day seasonal profile; there is no weekly pattern.
 * Correlation and recommendations are rules over a declared dependency graph. They are explainable,
   but they will not find patterns nobody encoded. The rule-based confidence factors are a heuristic;
   only the benchmark figures are measured, and those come from our own simulator.

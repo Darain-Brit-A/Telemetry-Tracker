@@ -22,7 +22,7 @@
                                        │ 6 outbox (egress   │    │   correlate → recommend → health
                                        │   proof, buffer)   │    │                  ▼
                                        └─────────┬──────────┘    │   dashboard :8080 (session, tenant-scoped)
-                                                 │ TLS 1.2+ (private CA pinned), HMAC-signed,
+                                                 │ mTLS 1.3 (private CA, cert pinned), HMAC, 
                                                  └─────────────────────────────────►  metadata only
                                                  ◄──── commands (approved, simulated) ─────
 ```
@@ -31,11 +31,11 @@ Every network hop:
 
 | Hop | Transport | Auth | Content |
 |---|---|---|---|
-| source → collector | HTTP JSON on 127.0.0.1, syslog UDP | local only (bind 127.0.0.1) | raw events |
-| collector → SaaS `/v1/discover` | HTTPS, CA-pinned | HMAC-SHA256 over ts+method+path+sha256(body) | none |
-| collector → SaaS `/r/<region>/v1/ingest` | HTTPS | HMAC, ±300 s replay window | allow-listed metadata batches |
-| collector → SaaS `/v1/heartbeat` | HTTPS | HMAC | collector health (allow-listed) |
-| collector ← SaaS `/v1/commands` | HTTPS (collector pulls; no inbound port) | HMAC | approved action + pseudonymous target |
+| source → collector | HTTP JSON on 127.0.0.1, syslog UDP | local only (bind 127.0.0.1); bearer token on HTTP `/ingest` | raw events |
+| collector → SaaS `/v1/discover` | mutual TLS 1.3, CA-pinned, redirects refused | client certificate pinned to the collector + HMAC-SHA256 over ts+method+path+sha256(body) | none |
+| collector → SaaS `/r/<region>/v1/ingest` | mutual TLS 1.3 | certificate + HMAC, ±300 s replay window | allow-listed metadata batches |
+| collector → SaaS `/v1/heartbeat` | mutual TLS 1.3 | certificate + HMAC | collector health (allow-listed) |
+| collector ← SaaS `/v1/commands` | mutual TLS 1.3 (collector pulls; no inbound port) | certificate + HMAC | approved action + pseudonymous target |
 | operator → dashboard | HTTP on localhost (TLS + SSO in production) | PBKDF2 password, HttpOnly session | tenant metadata |
 
 ## 2. What leaves, what stays
@@ -45,7 +45,7 @@ Every network hop:
 | raw log lines, payloads, stack traces | metric aggregates per 1 s window: `avg,min,max,n` for 9 named metrics |
 | secrets (passwords, tokens, keys, JWTs, connection strings) | event `category` + `severity` + `count` from a fixed list of 6 categories |
 | usernames, source IPs of auth attempts | `context`: a collector-generated template sentence (never raw text) |
-| hostnames (→ HMAC pseudonym `src-xxxxxxxxxx`, key never leaves) | `fingerprint`: hash of a log *template* (e.g. `fp-1a2b3c4d`) |
+| hostnames (→ HMAC pseudonym `src-xxxxxxxxxx`, key never leaves) | `fingerprint`: keyed HMAC of a log *template* (e.g. `fp-1a2b3c4d`) |
 | pseudonym map, local audit, raw retention | source `role`, `service`, `site`, `tz` tags |
 | | heartbeat: version, config hash, policy version, buffer depth, CPU/RSS |
 
@@ -142,7 +142,8 @@ Every state change is written to the health history with UTC time, previous stat
 | SQLite per region | Kafka/Redpanda per region → ClickHouse/Timescale for metrics, Postgres for incidents, partitioned by tenant |
 | one SaaS process | stateless ingest pods behind a regional LB; AIOps workers sharded by `hash(tenant, source)` (the detector is per-series, so it partitions cleanly) |
 | in-memory baselines | baselines checkpointed to a state store (rebuilt from the last 5 min on restart today) |
-| collector polling for commands | long-poll / gRPC stream; mTLS per collector with short-lived certs from enrolment |
+| collector polling for commands | long-poll / gRPC stream over the same mutual TLS |
+| demo CA from `setup_env.py` | managed PKI issuing short-lived collector certificates at enrolment |
 | config file registry | control-plane DB with tenant → region pinning; replication between regions only via an explicit policy record |
 
 Measured (docs/LOADTEST.md, real TLS + HMAC, full AIOps path, one process, one laptop): about
