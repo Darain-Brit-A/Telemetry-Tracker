@@ -1,462 +1,320 @@
-# Master Specification: Machine Learning & Intelligent Privacy Architecture
+# ML and statistical features: proposal
 
-> **Project:** End-to-end, secure AIOps observability delivering autonomous insights across enterprise, data center, cloud, and distributed architectures  
-> **Event:** CICADA 2026 Hackathon | TechForcz x Atria Institute of Technology  
-> **Repository:** `Telemetry-Tracker`  
-> **Target Components:** `common/policy.py`, `saas/aiops.py`, `collector/collector.py`  
-> **Test Suites:** `tests/test_policy.py`, `tests/test_engine.py`
+> **Project:** End-to-end, secure AIOps observability (CICADA 2026, TechForcz x Atria Institute of Technology)
+> **Repository:** `Telemetry-Tracker`
+> **Status:** proposal, **not implemented yet**. Nothing below is in the code until its checklist is done.
+> **Revision 2:** revised from the first draft after testing its rules against real data. What changed and
+> why is listed at the end.
 
----
+## Summary
 
-## Executive Summary & Innovation Matrix
+Three additions, each aimed at a judging criterion, each small enough to build in a few hours, and each
+required to prove itself with measurements before it ships.
 
-To achieve maximum scoring across all four judging phases of the hackathon evaluation guide, the platform implements three targeted, complementary Machine Learning & statistical algorithms:
-
-| # | Feature Name | Tier & Module | Core Algorithm / Technique | Primary Problem Solved | Hackathon Evaluation Marks |
+| # | Feature | Where | Technique | Problem it solves | Judging phase |
 |---|---|---|---|---|---|
-| **1** | **Intelligent Privacy Segregation & Shannon Entropy ML** | **Tier 1: Local Collector Edge** (`common/policy.py`) | Shannon Information Entropy ($H \ge 3.65\text{ bits/char}$) & Semantic Field Classifier | Detects raw unlabelled secrets (without keywords) and dynamically routes raw payloads to local storage vs. safe metadata to SaaS. | **Phase 1 (10M), Phase 3 (35M), Bonus Challenge** (Local Data Protection, Egress Proof) |
-| **2** | **Multivariate Anomaly Scoring & Feature Attribution** | **Tier 2: Central SaaS Engine** (`saas/aiops.py`) | Multi-dimensional Euclidean $\ell_2$-norm vector & proportional attribution weighting | Correlates multi-metric cascading anomalies and calculates exact percentage contributions of each signal. | **Phase 4 (30M - Highest Weight)** (Explainable AIOps Recommendations) |
-| **3** | **Adaptive EWMA Baseline Forecasting** | **Tier 2: Central SaaS Engine** (`saas/aiops.py`) | Exponentially Weighted Moving Average ($\alpha = 0.15$) with Anomaly Freezing | Adapts baselines dynamically to legitimate operational trends while suppressing 1s noise and preventing fault poisoning. | **Phase 2 (25M), Phase 3 (35M)** (Baselines beyond static thresholds) |
+| 1 | Entropy-assisted secret detection | Collector (`common/policy.py`) | Normalised Shannon entropy plus character-class and shape rules | Secrets with no keyword in front of them (`8f9b4c12...`) slip past the regex patterns | Phase 1 and 3: local data protection |
+| 2 | Deviation share per signal | SaaS (`saas/aiops.py`, `recommend()`) | Robust z-scores combined into an L2 score, shares split into root and symptoms | Shows how much each signal deviated, without confusing symptoms with the cause | Phase 4: explainable AIOps |
+| 3 | Seasonal baseline | SaaS (`saas/aiops.py`, `on_point()`) | Hour-of-day profile, existing median/MAD detector run on the residual | A daily peak is not an anomaly; a quiet-hours jump is | Phase 2 and 3: baselines beyond thresholds |
 
-All algorithms run on **pure Python standard library** (`math`, `re`, `collections`, `statistics`), requiring **zero external dependencies**, maintaining an execution latency of **$< 50\ \mu\text{s}$ per point**, and beating the required **$\le 15\text{s}$ breach-to-alert SLO** (measured at **3.8s**).
+All three use only the Python standard library (`math`, `re`, `collections`, `statistics`).
 
----
+**On wording:** these are statistical methods, not trained machine-learning models. Present them that way.
+Judges respect "a measured statistical rule we can explain" more than "ML" that turns out to be a
+threshold.
 
-## System Architecture: The Two-Tier ML Pipeline
+## Rules every feature follows
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ TIER 1: CUSTOMER LOCAL ENVIRONMENT (Collector Edge - Port 9101/9102/9103)               │
-│                                                                                        │
-│  [ Raw Logs, Syslog, Metrics, Auth Events ]                                            │
-│                    │                                                                   │
-│                    ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────┐                  │
-│  │ FEATURE 1: Shannon Entropy Classifier & Privacy Segregator       │                  │
-│  │   - Regex DLP: Strips known keys (JWT, AWS, PAN, PII)            │                  │
-│  │   - Shannon Entropy H(S): Scrubs unlabelled secrets (H >= 3.65)  │                  │
-│  │   - segregate_telemetry(): Partitions record                     │                  │
-│  └─────────────────┬────────────────────────────────┬───────────────┘                  │
-│                    │                                │                                  │
-│                    ▼                                ▼                                  │
-│    ┌───────────────────────────────┐  ┌───────────────────────────────┐                │
-│    │ Local SQLite Raw Store        │  │ Allow-Listed Metadata Buffer  │                │
-│    │ - Full raw payload text       │  │ - Pseudonymous IDs (src-xxxx) │                │
-│    │ - Egress Proof Panel (Audit)  │  │ - Normalized metrics & UTC ts │                │
-│    │ - Stays 100% on premises      │  │ - Zero raw credentials        │                │
-│    └───────────────────────────────┘  └─────────────┬─────────────────┘                │
-└─────────────────────────────────────────────────────┼──────────────────────────────────┘
-                                                      │  TLS 1.2+ / HMAC Signed
-                                                      ▼  (Metadata Only)
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ TIER 2: CENTRAL SAAS PLATFORM (Multi-Tenant Ingest & AIOps - Port 8080)                 │
-│                                                                                        │
-│  [ Metadata Stream Ingested into Tenant Namespace ]                                    │
-│                    │                                                                   │
-│                    ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────┐                  │
-│  │ FEATURE 3: Adaptive EWMA Baseline Forecasting Engine             │                  │
-│  │   - S_t = 0.15 * x_t + 0.85 * S_{t-1}                            │                  │
-│  │   - Tracks dynamic operational drift; suppresses noise           │                  │
-│  │   - Freezes updates during active anomalies (Anti-Poisoning)     │                  │
-│  └─────────────────┬────────────────────────────────────────────────┘                  │
-│                    │                                                                   │
-│                    ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────┐                  │
-│  │ Incident Correlation & Dependency Graph Engine                   │                  │
-│  │   - Merges related alerts across services into 1 Incident        │                  │
-│  └─────────────────┬────────────────────────────────────────────────┘                  │
-│                    │                                                                   │
-│                    ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────┐                  │
-│  │ FEATURE 2: Multivariate Anomaly Scoring & Feature Attribution    │                  │
-│  │   - Multi-metric Euclidean Vector Norm: S_multi = ||z||_2        │                  │
-│  │   - Proportional Feature Weights: w_i = (z_i / Σ z_j) * 100%     │                  │
-│  │   - Outputs Explainable RCA Breakdown on Dashboard               │                  │
-│  └─────────────────┬────────────────────────────────────────────────┘                  │
-│                    │                                                                   │
-│                    ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────┐                  │
-│  │ Autonomous Ops: Safe Remediation Simulation                      │                  │
-│  │   - Role-gated human approval -> Audit Log -> Rollback           │                  │
-│  └──────────────────────────────────────────────────────────────────┘                  │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
+1. **A model may decide what to look at, never what leaves the collector.** The allow-list and DLP gate in
+   `common/policy.py` keep the final say. These features can add redactions and explanations; they can
+   never cause a field to be sent.
+2. **Measured, not claimed.** Each feature has acceptance criteria below. It ships only when they pass,
+   and the numbers go into the docs from the actual run.
+3. **Explainable.** Every decision can be traced to the inputs that caused it and shown on screen.
+4. **No regressions.** The unit tests, `tools/benchmark.py` (five seeds) and `tools/verify.py --spawn` must
+   still pass.
 
 ---
 
-## 1. Feature 1: Intelligent Privacy Segregation & Shannon Entropy ML
+## Feature 1: entropy-assisted secret detection
 
-### 1.1 The Enterprise Problem
-Static regex filters search for rigid patterns like `password=`, `token=`, or `AKIA[0-9A-Z]{16}`. However:
-* In modern microservices, developers often log unlabelled raw tokens, session cookies, and hex encryption hashes:
-  ```
-  [INFO] db_pool: acquired connection using 8f9b4c12d9e03fa57b21e84c90d2 at runtime
-  ```
-* Because there is no keyword `"password"` in front of it, standard DLP tools transmit this secret to SaaS.
-* Furthermore, incoming unknown telemetry feeds contain arbitrary keys. Static rules cannot dynamically separate safe numeric telemetry from sensitive customer attributes.
+### The problem
 
-### 1.2 Mathematical Formulation: Shannon Information Entropy
-Shannon Entropy quantifies the amount of uncertainty or information density in a message:
+The regex patterns catch secrets with a recognisable shape or a keyword (`password=`, `AKIA...`, `Bearer`).
+They miss a bare random token:
 
-$$H(S) = -\sum_{i=1}^{n} P(c_i) \log_2 P(c_i)$$
+```
+[INFO] db_pool: acquired connection using 8f9b4c12d9e03fa57b21e84c90d2 at runtime
+```
 
-Where:
-* $S$ is the string or token under inspection.
-* $n$ is the count of distinct characters in $S$.
-* $P(c_i) = \frac{\text{count}(c_i)}{|S|}$ is the empirical probability of character $c_i$.
-* $\log_2$ measures information density in **bits per character**.
+### Why a plain entropy threshold does not work
 
-#### Empirical Entropy Distribution:
-| Data Category | Example String | Entropy $H(S)$ | Classification Action |
-|---|---|---|---|
-| Natural Language Text | `"database connection timeout"` | $2.91\text{ bits/char}$ | Safe for local processing |
-| Microservice Name | `"checkout-api-service"` | $3.15\text{ bits/char}$ | Safe for local processing |
-| Formatted UUID | `"f6411f1b-2217-40b5-9244-652875177458"` | $3.42\text{ bits/char}$ | Structural ID (Bypassed via Regex) |
-| System Pseudonym | `"src-7cf825bf88"` | $3.12\text{ bits/char}$ | Anonymized ID (Bypassed via Prefix) |
-| **Random Hex Secret** | `"8f9b4c12d9e03fa57b21e84c90d2"` | **$3.75\text{ bits/char}$** | **QUARANTINED & REDACTED** |
-| **Base64 API Key** | `"wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"` | **$4.61\text{ bits/char}$** | **QUARANTINED & REDACTED** |
+Shannon entropy measures how random a string looks:
 
-**Decision Boundary:** Any unlabelled alphanumeric token with $\text{len} \ge 16$ and $H(S) \ge 3.65\text{ bits/char}$ (or $\text{len} \ge 24$ and $H(S) \ge 3.90\text{ bits/char}$) is classified as a cryptographic credential.
+$$H(S) = -\sum_{c} P(c)\,\log_2 P(c)$$
 
-### 1.3 Implementation Source Code (`common/policy.py`)
+The first draft redacted any token of 16+ characters with digits and letters and $H \ge 3.65$ bits per
+character. Tested on ordinary identifiers, that rule flagged:
+
+| Ordinary identifier | Flagged as a secret |
+|---|---|
+| W3C trace IDs (32 hex) | 42% |
+| Git commit SHAs (40 hex) | 69% |
+| Request IDs (`req_` + 20 letters/digits) | 99% |
+| Kubernetes pod names (`checkout-api-7d4b9c8f6-x2kqz`) | 100% |
+
+Each hit would also have raised a `security.secret_in_log` alert, which means an alert storm on any real
+system. It also missed a real random 32-hex key. The reason: hex strings can never exceed 4.0 bits per
+character, so a fixed threshold near 3.65 lands in the middle of normal hex IDs.
+
+### The design
+
+Score each candidate token on three things, and redact only when all agree:
+
+1. **Normalised entropy.** Divide $H$ by the maximum possible for the token's alphabet ($\log_2 16 = 4$ for
+   hex, about 5.95 for base62, 6 for base64). A value close to 1 means "as random as this alphabet allows".
+   Threshold: at least 0.85.
+2. **Shape.** Length 20 or more; a mix of upper case, lower case and digits (base62/base64), or hex only
+   when it appears next to a hint word (see 3).
+3. **Context.** Known identifier shapes are skipped: UUIDs, 32/40/64-character hex IDs (trace IDs, SHAs,
+   digests), our own `src-` / `col-` / `fp-` / `tpl-` prefixes, `word-word-hash` pod and container
+   names, and tokens inside a field named like an ID (`trace_id`, `request_id`, `commit`, `pod`). A hex
+   token is only treated as a secret when a hint word (`key`, `secret`, `token`, `auth`, `credential`,
+   `using`, `with`) appears within the three tokens before it.
+
+What happens on a hit:
+
+- the token is replaced with `[REDACTED:possible_secret]` in the redacted view (the raw line stays in the
+  local store, as today);
+- it is recorded as a local finding;
+- it is **not** treated as a confirmed credential. The collector sends one rate-limited
+  `security.possible_secret` summary per source per minute (count only), instead of one alert per line.
+
+Nothing about egress changes: log text never leaves the collector, with or without this feature. The
+gain is a cleaner local redacted view and an early warning that secrets are being logged.
+
+### Sketch
 
 ```python
-import math
-import re
-from collections import Counter
+HINTS = {"key", "secret", "token", "auth", "credential", "using", "with"}
+ID_SHAPES = [UUID_RX, re.compile(r"^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$"),
+             re.compile(r"^(src|col|fp|tpl)-"), re.compile(r"^[a-z]+(-[a-z]+)*-[a-z0-9]{5,10}(-[a-z0-9]{5})?$")]
 
-# Registered credential types (used to raise security events in Tier 1)
-CREDENTIAL_TYPES = {
-    "private_key", "jwt", "bearer", "aws_key", "api_key",
-    "kv_secret", "url_creds", "high_entropy_secret"
-}
+def normalised_entropy(tok):
+    alphabet = 16 if re.fullmatch(r"[0-9a-fA-F]+", tok) else 64
+    return shannon_entropy(tok) / math.log2(min(alphabet, len(tok)))
 
-def shannon_entropy(s: str) -> float:
-    """Calculate the Shannon Entropy of string s in bits per character."""
-    if not s or len(s) < 2:
-        return 0.0
-    counts = Counter(s)
-    total = len(s)
-    return -sum((c / total) * math.log2(c / total) for c in counts.values())
-
-_ENTROPY_TOKEN_RX = re.compile(r"\b[A-Za-z0-9+/=_-]{16,}\b")
-_UUID_RX = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
-
-def _scrub_high_entropy(text: str):
-    """Scans for unlabelled high-entropy secrets and scrubs them."""
-    findings = []
-    def repl(m):
-        token = m.group(0)
-        # Skip UUIDs, pseudonymous IDs, timestamps, or already-redacted tags
-        if "REDACTED" in token or token.startswith("src-") or token.startswith("col-") or token.startswith("fp-"):
-            return token
-        if _UUID_RX.search(token):
-            return token
-        
-        h = shannon_entropy(token)
-        has_digit = any(c.isdigit() for c in token)
-        has_alpha = any(c.isalpha() for c in token)
-        
-        # High entropy decision boundary:
-        if (has_digit and has_alpha and len(token) >= 16 and h >= 3.65) or (len(token) >= 24 and h >= 3.90):
-            findings.append("high_entropy_secret")
-            return "[REDACTED:high_entropy_secret]"
-        return token
-
-    out = _ENTROPY_TOKEN_RX.sub(repl, text)
-    return out, findings
-
-def redact_text(text: str):
-    """Full DLP redaction pipeline combining regex patterns and Shannon entropy."""
-    findings = []
-    out = text
-    # 1. Regex scrub (known keywords, PAN, PII, AWS keys)
-    for name, rx, repl in SECRET_PATTERNS:
-        out, n = rx.subn(repl, out)
-        if n:
-            findings.extend([name] * n)
-    
-    # 2. ML Shannon Entropy scrub (unlabelled raw secrets)
-    out, entropy_findings = _scrub_high_entropy(out)
-    if entropy_findings:
-        findings.extend(entropy_findings)
-        
-    return out, findings
-
-def segregate_telemetry(record: dict) -> dict:
-    """Intelligently segregate incoming telemetry into what can egress to SaaS
-    vs what must be retained locally in Tier 1.
-    """
-    local_retained = {}
-    saas_eligible = {}
-    is_sensitive = False
-
-    for k, v in record.items():
-        k_lower = str(k).lower()
-        if any(s in k_lower for s in ("password", "secret", "token", "auth", "query", "payload", "raw")):
-            local_retained[k] = v
-            is_sensitive = True
-        elif isinstance(v, str):
-            redacted, findings = redact_text(v)
-            if findings:
-                local_retained[k] = v
-                saas_eligible[k] = redacted
-                is_sensitive = True
-            elif len(v) > 120 or shannon_entropy(v) > 4.2:
-                local_retained[k] = v
-                is_sensitive = True
-            else:
-                saas_eligible[k] = v
-        elif isinstance(v, (int, float, bool)):
-            saas_eligible[k] = v
-        else:
-            local_retained[k] = v
-
-    return {
-        "saas_eligible": saas_eligible,
-        "local_retained": local_retained,
-        "classification": "SENSITIVE_QUARANTINED" if is_sensitive else "SAFE_METADATA"
-    }
+def possible_secret(tok, prev_tokens):
+    if len(tok) < 20 or any(rx.search(tok) for rx in ID_SHAPES):
+        return False
+    is_hex = re.fullmatch(r"[0-9a-fA-F]+", tok) is not None
+    mixed = re.search(r"[a-z]", tok) and re.search(r"[A-Z]", tok) and re.search(r"[0-9]", tok)
+    hinted = any(p.lower().strip(":=") in HINTS for p in prev_tokens[-3:])
+    return normalised_entropy(tok) >= 0.85 and (mixed or (is_hex and hinted))
 ```
 
-### 1.4 Automated Verification (`tests/test_policy.py`)
-```powershell
-python -m unittest tests.test_policy.PrivacyMLSegregation
-```
-* **Validation Outcome:** Confirmed that raw hex key `8f9b4c12d9e03fa57b21e84c90d2` is redacted to `[REDACTED:high_entropy_secret]` and that SQL queries with customer emails are segregated to `local_retained` with zero leakage to SaaS.
+### What we drop from the first draft
+
+`segregate_telemetry()` is **not** implemented. It sent every short, plain string field to the SaaS, so
+`{"user": "alice", "host": "db-01"}` would have gone out as-is, bypassing the allow-list. Today payloads are
+built only from aggregates, and that must not change. If the team wants help with unknown incoming fields,
+the safe version is a *local* classifier inside `tools/stream_adapter.py` that labels each field as metric,
+label, identifier or free text to suggest a mapping. It never sends anything.
+
+### Acceptance criteria
+
+Two fixture files in `tests/fixtures/`:
+- **IDs corpus** (must not be flagged): 2,000 each of trace IDs, SHAs, request IDs, pod names, UUIDs,
+  plus normal log sentences;
+- **Secrets corpus** (must be flagged): random base62/base64 keys of 20-64 characters, GitHub- and
+  Slack-style tokens, AWS-style secret keys, and hex keys preceded by a hint word.
+
+| Measure | Target |
+|---|---|
+| False positives on the IDs corpus | below 1% overall, and below 2% for each ID type |
+| Detection on the secrets corpus | 90% or more |
+| Effect on the existing tests and DLP | none |
+| Cost per log line | under 50 µs, measured |
 
 ---
 
-## 2. Feature 2: Multivariate Anomaly Scoring & Feature Attribution
+## Feature 2: deviation share per signal
 
-### 2.1 The Enterprise Problem
-The Hackathon Evaluation Guide places the highest mark weight (30 marks in Phase 4) on:
-> *"Explainable AIOps recommendations: why the anomaly was flagged, which signals contributed, and why this action is suggested. Weak: Recommendations appear as unexplained text, or the team cannot say what data led to them."*
+### The problem
 
-When an infrastructure failure occurs, multiple telemetry signals spike simultaneously. Univariate thresholding treats each signal as an isolated alert, giving SREs no understanding of **which metric drove the incident** and which metrics were secondary consequences.
+An incident has several signals. Operators want to know how far each one moved, and judges ask "which
+signals contributed?" (Phase 4, the highest-weighted criterion).
 
-### 2.2 Mathematical Formulation: Multi-Dimensional Attribution Vector
+### The method
 
-#### Step 1: Standardized Normalized Deviation ($z$-score Space)
-To combine metrics with incompatible units (e.g. `%`, `ms`, `Mbps`), all readings are mapped to standard normal deviation units using median and Median Absolute Deviation (MAD):
+For each signal $i$ in the incident, use the robust z-score the engine already computes:
 
-$$z_i = \left| \frac{x_i - \text{median}_i}{\max(1.4826 \cdot \text{MAD}_i, \text{floor}_i)} \right|$$
+$$z_i = \left|\frac{x_i - \mathrm{median}_i}{\max(1.4826\cdot\mathrm{MAD}_i,\ \mathrm{floor}_i)}\right|$$
 
-#### Step 2: Multivariate Anomaly Score (Euclidean $\ell_2$-Norm)
-For an incident encompassing $K$ active signals $\vec{z} = [z_1, z_2, \dots, z_K]^T$, the composite anomaly score represents the distance from the multi-dimensional baseline center:
+Composite deviation score (how far the incident is from normal overall):
 
-$$S_{\text{multi}} = \|\vec{z}\|_2 = \sqrt{\sum_{i=1}^{K} z_i^2}$$
+$$S = \|\vec z\|_2 = \sqrt{\textstyle\sum_i z_i^2}$$
 
-#### Step 3: Proportional Feature Attribution Weight
-The percentage contribution $w_i$ of each metric $i$ to the incident is calculated as:
+Share of each signal:
 
-$$w_i = \frac{z_i}{\sum_{j=1}^{K} z_j} \times 100\% \quad \text{where} \quad \sum_{i=1}^{K} w_i = 100\%$$
+$$w_i = \frac{z_i}{\sum_j z_j}\times 100\%$$
 
-### 2.3 Implementation Source Code (`saas/aiops.py`)
+### What changes from the first draft
 
-Integrated inside `Engine.recommend()`:
+The first draft added z-scores per *metric name* across all sources. In a cascade the symptoms are the
+largest deviations, so it reported, for the real orders-db incident, "latency 74%, CPU 21%" while the root
+cause was orders-db CPU. That reads as a contradiction.
 
-```python
-import math
+Three fixes:
 
-def recommend(self, t, sig, ranking, alerts):
-    names = {s["signal"] for s in sig}
-    root = ranking[0]
-    # ... [timing, root cause ranking, and topology resolution] ...
+1. Compute shares per **(source, signal)**, not per metric name.
+2. Show the **root group** (signals on the ranked root source) separately from **symptoms**.
+3. Label it honestly: **"share of total deviation"**. Size of deviation is not cause; the root is chosen by
+   onset time and position in the dependency graph, and the text says so.
 
-    def out(title, cause, action, target, why, base, severity_override=None, alternatives=None, extra=None):
-        steps.extend(extra or [])
-        
-        # -------------------------------------------------------------
-        # Multivariate Signal Attribution (ML feature attribution)
-        # -------------------------------------------------------------
-        z_scores = {}
-        for s in sig:
-            sig_name = s.get("signal") or "unknown"
-            z_val = abs(float(s.get("detail", {}).get("z") or s.get("detail", {}).get("peak_z") or 1.0))
-            z_scores[sig_name] = z_scores.get(sig_name, 0.0) + z_val
+Event signals (auth bursts, secrets, stale data) have no z-score. They are listed separately instead of
+being given an arbitrary weight.
 
-        total_z = sum(z_scores.values()) or 1.0
-        feature_attribution = {k: round((v / total_z) * 100, 1) for k, v in z_scores.items()}
-        multi_score = round(math.sqrt(sum(v * v for v in z_scores.values())), 2)
+### Worked example (the orders-db cascade scenario, values as shown on the dashboard)
 
-        if feature_attribution:
-            attr_str = ", ".join(f"{k}: {v}%" for k, v in sorted(feature_attribution.items(), key=lambda x: -x[1]))
-            steps.append(f"Multivariate feature attribution (ML): {attr_str} (composite score: {multi_score})")
+| Group | Source | Signal | z | Share of total deviation |
+|---|---|---|---|---|
+| Root | orders-db | CPU | 21.0 | 21.2% |
+| Root | orders-db | latency | 6.6 | 6.7% |
+| Root | orders-db | memory | 4.2 | 4.2% |
+| Symptom | checkout-web, host A | latency | 25.2 | 25.5% |
+| Symptom | checkout-web, host B | latency | 24.8 | 25.1% |
+| Symptom | checkout-api | latency | 17.2 | 17.4% |
 
-        a = dict(ACTIONS[action], id=action, target=target, why=why)
-        factors.insert(0, f"{base:.2f}: base confidence of pattern '{title.split(':')[0]}'")
-        
-        b = self.benchmark
-        if b and b.get("precision") is not None:
-            factors.append(f"measured detector quality ({b['trials']} labelled trials, tools/benchmark.py): "
-                           f"precision {b['precision']:.0%}, recall {b['recall']:.0%}, "
-                           f"{b['false_alarms_per_host_hour']} false alarms per host-hour")
+Composite score $S = 45.3$. The reasoning line reads:
 
-        r = {
-            "title": title,
-            "likely_cause": cause,
-            "confidence": conf(base),
-            "confidence_factors": factors,
-            "reasoning": steps,
-            "action": a,
-            "alternatives": alternatives or [],
-            "root_source": root["source"],
-            "root_service": root["service"],
-            "feature_attribution": feature_attribution,
-            "multivariate_anomaly_score": multi_score
-        }
-        if severity_override:
-            r["severity_override"] = severity_override
-        return r
-```
+> "Symptoms carry 68% of the total deviation (latency on checkout-web and checkout-api). The root is
+> orders-db (32%, led by CPU at z = 21.0) because it deviated first and the slowed services depend on it."
 
-### 2.4 Incident Payload Output
+### Output added to the recommendation
+
 ```json
-{
-  "title": "Resource saturation on orders-db propagating to dependents",
-  "likely_cause": "Database connection saturation driving cascading latency",
-  "confidence": 0.94,
-  "feature_attribution": {
-    "latency_ms": 68.4,
-    "cpu_pct": 21.2,
-    "packet_loss_pct": 10.4
-  },
-  "multivariate_anomaly_score": 14.82,
-  "action": {
-    "id": "svc.scale_out",
-    "target": "src-bfcdbd862a",
-    "why": "Scaling out the database replica alleviates thread contention"
-  },
-  "reasoning": [
-    "Multivariate feature attribution (ML): latency_ms: 68.4%, cpu_pct: 21.2%, packet_loss_pct: 10.4% (composite score: 14.82)",
-    "Root-cause ranking: orders-db (src-bfcdbd862a) scored 1.0 (earliest onset, upstream in dependency graph)"
-  ]
+"deviation": {
+  "composite_score": 45.3,
+  "root": [{"source": "src-bfcdbd862a", "signal": "cpu_pct", "z": 21.0, "share": 21.2}, "..."],
+  "symptoms": [{"source": "src-...", "signal": "latency_ms", "z": 25.2, "share": 25.5}, "..."],
+  "events": [],
+  "note": "share of total deviation; root chosen by onset and dependency position"
 }
 ```
 
----
+The dashboard shows it as a small bar chart under "Why it was flagged", root bars in one colour and
+symptom bars in another.
 
-## 3. Feature 3: Adaptive EWMA Baseline Forecasting
+### Acceptance criteria
 
-### 3.1 The Enterprise Problem
-* **Static Thresholds Fail:** A static threshold (e.g. `alert if CPU > 80%`) pages engineers during planned peak shopping hours and fails to detect a 30% jump during silent overnight hours.
-* **Flat Rolling Medians Lag:** Unweighted rolling windows suffer from baseline lag during steady traffic shifts and take too long to recover after benign transient spikes.
-
-### 3.2 Mathematical Formulation: EWMA with Anomaly Freezing
-The Exponentially Weighted Moving Average recursively forecasts expected baseline values by geometrically discounting older telemetry:
-
-$$S_t = \alpha \cdot x_t + (1 - \alpha) \cdot S_{t-1}$$
-
-Where:
-* $x_t$ is the current metric reading at second $t$.
-* $S_t$ is the updated baseline estimate.
-* $\alpha = 0.15$ is the exponential smoothing factor.
-* **Half-life ($k_{1/2}$):** $\frac{\ln(0.5)}{\ln(1 - \alpha)} \approx 4.26\text{ windows}$. The baseline smoothly absorbs genuine operational trends in ~10 seconds while suppressing 1-second transient spikes.
-
-#### The Anti-Poisoning Guardrail:
-To prevent an active failure from raising the baseline and canceling the alert:
-
-$$S_t = \begin{cases} 
-0.15 \cdot x_t + 0.85 \cdot S_{t-1} & \text{if } \text{status} = \text{NORMAL} \ (z_t < Z_{\text{learn}}) \\
-S_{t-1} & \text{if } \text{status} = \text{ANOMALOUS} \ (z_t \ge Z_{\text{learn}})
-\end{cases}$$
-
-### 3.3 Implementation Source Code (`saas/aiops.py`)
-
-#### Added to `Series.__slots__`:
-```python
-class Series:
-    __slots__ = ("hist", "recent", "last_ts", "consec", "clear", "anomalous", "run_start", "onset", "z", "peak_z",
-                 "peak_v", "thr_consec", "ewma")
-
-    def __init__(self):
-        self.hist = collections.deque(maxlen=180)
-        self.recent = collections.deque(maxlen=60)
-        self.last_ts = 0
-        self.consec = self.clear = self.thr_consec = 0
-        self.anomalous = False
-        self.run_start = self.onset = None
-        self.z = None
-        self.peak_z = 0.0
-        self.peak_v = None
-        self.ewma = None  # Adaptive EWMA baseline
-```
-
-#### Updated in `Engine.on_point()`:
-```python
-s.last_ts = ts
-s.recent.append((ts, value))
-
-# Adaptive EWMA baseline tracking
-if s.ewma is None:
-    s.ewma = value
-elif not s.anomalous:
-    s.ewma = 0.15 * value + 0.85 * s.ewma
-```
+| Measure | Target |
+|---|---|
+| Shares add up to 100% (z-scored signals only) | always |
+| The root group is always the ranked root source | always |
+| The text never calls a symptom the cause | checked by a unit test on the cascade scenario |
+| Effect on detection | none (explanation only) |
 
 ---
 
-## 4. End-to-End Execution Trace
+## Feature 3: seasonal baseline
 
-Here is the step-by-step lifecycle of an injected incident through all 3 ML features:
+### The problem
 
-```
-Step 1: Organizer Stream Ingests Raw Telemetry
-        Payload: {"host": "orders-db", "query": "auth token d8f7a93b4c12d9e0f34a8b71", "latency_ms": 320, "cpu": 94}
+Real traffic has daily patterns. A CPU level that is normal at the evening peak can be abnormal at 3 a.m.
+The current baseline (median and MAD over the last 180 normal windows) only knows the last few minutes.
 
-Step 2: Feature 1 (Tier 1 Edge) Intercepts the Ingest
-        - Calculates Shannon entropy of "d8f7a93b4c12d9e0f34a8b71" -> H = 3.75 bits/char.
-        - Redacts to [REDACTED:high_entropy_secret].
-        - Stores raw query locally in Tier 1 SQLite.
-        - Transmits only allow-listed metadata: {source_id: "src-bfcdbd862a", latency_ms: 320, cpu_pct: 94}.
+### Why a fast EWMA does not solve it
 
-Step 3: Feature 3 (Tier 2 SaaS) Evaluates Temporal Baselines
-        - Compares latency_ms (320ms) against adaptive EWMA baseline (45ms).
-        - Computes z-score: z = (320 - 45) / 18.2 = 15.1.
-        - Freezes EWMA update to prevent baseline poisoning.
+The first draft proposed $S_t = 0.15\,x_t + 0.85\,S_{t-1}$. Two problems:
 
-Step 4: AIOps Incident Engine Correlates Dependency Signals
-        - Merges upstream orders-db latency with downstream checkout-api timeouts.
+- In the draft's code the EWMA was computed but never used for detection, so it changed nothing.
+- If it were used, a smoothing factor of 0.15 catches up with a new level in about 4 seconds (half-life
+  4.3 windows). A slow fault, such as a memory leak or creeping latency, would become "normal" before it
+  was ever flagged. That is the opposite of what we want.
 
-Step 5: Feature 2 (Tier 2 SaaS) Computes Multivariate Attribution
-        - Vector z = [latency: 15.1, cpu: 8.2, loss: 3.1].
-        - S_multi = sqrt(15.1^2 + 8.2^2 + 3.1^2) = 17.47.
-        - Attribution: latency_ms = 57.2%, cpu_pct = 31.1%, packet_loss = 11.7%.
-        - Dashboard outputs: "Resource saturation on orders-db propagating to dependents".
-```
+### The design
+
+Learn what is normal *for this hour of the day*, then run the existing detector on the difference:
+
+1. For each series, keep a 24-slot profile: the median value seen in each hour of the day (UTC, or the
+   source's local hour from its timezone), updated only from windows that were not anomalous.
+2. Once a slot has enough history (at least 3 days' worth of samples for that hour), compute the
+   **residual** $r_t = x_t - \mathrm{profile}[\text{hour}(t)]$.
+3. Run the existing median/MAD detector, persistence filter and thresholds on the residual instead of the
+   raw value. Until a slot has enough history, behaviour is exactly as today.
+4. The explanation says which baseline was used: "CPU 71% vs 38% expected at 03:00 (seasonal), z = 9.4".
+
+A slow EWMA ($\alpha = 0.01$, half-life about 69 windows) may be shown as a **trend line** in explanations
+("rising 4% per minute"), never as the baseline.
+
+### Demonstrating it in a 24-hour event
+
+A real weekly pattern cannot be shown in a day. The simulator gets a **compressed day**: a 24-slot daily
+curve played back over 10 minutes, with the profile's "hour" mapped to simulated time. The demo then shows
+the evening peak raising no alert, and the same CPU level at simulated 3 a.m. raising one.
+
+### Acceptance criteria
+
+New benchmark scenarios: `daily_peak` (a normal daily rise that must not alert) and `night_spike` (the same
+level at a quiet hour, which must alert).
+
+| Measure | Target |
+|---|---|
+| False alarms on `daily_peak` | none |
+| Detection of `night_spike` | 90% or more |
+| Existing scenarios (including `mem_leak`) | precision and recall stay within today's range |
+| Before enough history | identical to current behaviour |
 
 ---
 
-## 5. Judge Q&A and Live Demo Script
+## Implementation plan
 
-### Demo Checkpoint 1: Egress Proof & Shannon Entropy Redaction
-* **URL:** `http://127.0.0.1:9101`
-* **What to Show:** Send a raw log containing a random hex token. Show the side-by-side view: the raw log is stored locally in Tier 1 SQLite, while the outgoing egress payload contains `[REDACTED:high_entropy_secret]`.
-* **Judge Question:** *"How does your collector catch secrets without keywords like `password`?"*
-* **Your Answer:** *"We run an online Shannon Entropy classifier in Tier 1. It calculates character uncertainty in real-time. Strings with uniform random distribution exceeding 3.65 bits/char are mathematically classified as cryptographic material and automatically scrubbed before leaving the perimeter."*
+| Step | Work | Depends on | Effort |
+|---|---|---|---|
+| 1 | Feature 2: deviation shares, root vs symptom split, dashboard bar chart, unit test on the cascade | none | 1.5 h |
+| 2 | Feature 1: candidate scoring, ID-shape and context rules, fixture corpora, rate-limited summary event (allow-list gets `security.possible_secret`) | none | 2.5 h |
+| 3 | Feature 3: hour-of-day profiles, residual detection, compressed-day simulator mode, two benchmark scenarios | B4 from `bugs.md` (two-sided detection) is recommended first | 3 h |
+| 4 | Re-run the unit tests, the benchmark on five seeds and `verify.py --spawn`; put the measured numbers into this document and the README | 1-3 | 1 h |
 
-### Demo Checkpoint 2: Explainable AIOps & Signal Attribution
-* **URL:** `http://localhost:8080`
-* **What to Show:** Click on Incident #4. Open the Reasoning tab.
-* **Judge Question:** *"Why did the system recommend scaling out `orders-db` instead of `checkout-api`?"*
-* **Your Answer:** *"Our AIOps engine computes the multivariate deviation vector across all services. The earliest onset ($T_0$) occurred at `orders-db` with a composite score of 14.82 driven 68.4% by database I/O latency. Downstream `checkout-api` errors were consequence signals. The mathematical attribution isolates `orders-db` as the root cause."*
+One feature per commit, each with its tests, following the rules in `plan.md`.
 
 ---
 
-## 6. Verification Commands
+## Judge questions and honest answers
 
-Run the full automated verification test suite:
+**"How do you catch secrets without a keyword like `password`?"**
+"Regex patterns catch the known shapes. For the rest, the collector scores each long token on how random
+it is for its alphabet, its character mix and its context, and skips known ID formats. On our test corpus
+it flags [measured]% of secrets with [measured]% false positives on normal IDs. It can only add
+redactions: log text never leaves the collector either way."
 
-```powershell
-cd d:\praveen\Hackathon\AIopus\Telemetry-Tracker
-python -m unittest discover tests
-```
+**"Which signals contributed, and why scale orders-db and not checkout-api?"**
+"The breakdown shows each signal's share of the total deviation. Checkout's latency moved the most, but
+it is a symptom: orders-db deviated first and checkout depends on it, so fixing orders-db removes the
+cause. The chart shows root and symptoms separately for that reason."
 
-**Result:**
-```
-Ran 59 tests in ~19.4s
-OK (skipped=1)
-```
-*(Confirms that all 3 ML features are active, passing, and cause zero regressions across the codebase).*
+**"How do you tell a normal daily peak from a real anomaly?"**
+"Two ways. Peer comparison: if similar hosts rise together with traffic, it is demand. And once there is
+enough history, a seasonal baseline: we compare each value with what is normal for that hour. In the demo
+we use a compressed day to show it."
+
+**"Is this machine learning?"**
+"These are statistical methods: robust z-scores, entropy scoring, seasonal profiles. We chose them because
+every decision can be explained and measured."
+
+---
+
+## Changes from the first draft
+
+| First draft | Revision 2 | Why |
+|---|---|---|
+| Said "implementation" and "59 tests OK" | Marked as a proposal with acceptance criteria | None of the code or tests were in the repository; the repo had 57 tests |
+| Entropy threshold 3.65 bits/char | Normalised entropy plus shape and context rules | The threshold flagged 42-100% of normal IDs and missed a real random hex key |
+| Entropy hits counted as confirmed credentials | Separate `possible_secret`, rate-limited summary | Avoids one security alert per log line |
+| `segregate_telemetry()` routes fields to the SaaS | Dropped; optional local field classifier in the adapter only | It would have sent usernames and hostnames past the allow-list |
+| Attribution per metric name | Per source and signal, root vs symptoms, labelled "share of deviation" | The draft reported "latency 74%" when the root cause was CPU |
+| Fast EWMA (α = 0.15) as the baseline | Hour-of-day seasonal profile; slow EWMA only as a trend line | The fast EWMA was unused in the draft, and if used it would absorb slow faults in seconds |
+| Entropy table: "database connection timeout" 2.91, "checkout-api-service" 3.15 bits/char | Removed | Actual values are 3.53 and 3.65 |
+| Example output with packet loss and an "Incident #4 Reasoning tab" | Worked example from the real incident | The example did not match what the system produces |
+| Called "ML" throughout | Called statistical methods | It is more accurate, and judges ask |
