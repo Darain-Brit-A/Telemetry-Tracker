@@ -144,7 +144,7 @@ CUSTOMER SITE (Tier 1)                         |  CENTRAL SAAS (Tier 2)
  servers, apps,  --> LOCAL COLLECTOR           |
  network, auth        1 collect                |
  logs                 2 redact + pseudonymize  |
-                      3 aggregate (2 s)        |
+                      3 aggregate (1 s)        |
    raw store  <------ 4 analyse locally        |
    (stays here)       5 apply allow-list + DLP |
                       6 outbox (egress proof)  |

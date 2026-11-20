@@ -71,7 +71,7 @@ class App:
     def ingest(self, cid, t, items):
         st = self.stores.for_tenant(t)
         res = {"accepted": [], "duplicates": [], "rejected": [], "receipts": {}}
-        with LOCK:
+        with LOCK, st.transaction():          # one SQLite transaction per batch
             for p in items:
                 pid = p.get("payload_id") if isinstance(p, dict) else None
                 if not pid:
@@ -133,15 +133,16 @@ class App:
                  "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,source_id) DO UPDATE SET role=excluded.role, "
                  "service=excluded.service, site=excluded.site, tz=excluded.tz, collector_id=excluded.collector_id",
                  (t, s["source_id"], cid, s.get("role"), s.get("service"), s.get("site"), s.get("tz"), recv))
-        newest = 0
-        for m in sorted(p.get("metrics", []), key=lambda m: m["ts"]):
-            ts = parse_iso(m["ts"])
-            newest = max(newest, ts)
-            st.x("""INSERT INTO metrics(tenant_id,source_id,name,ts_ms,avg,min,max,n,received_ms) VALUES(?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(tenant_id,source_id,name,ts_ms) DO UPDATE SET
-                      avg=(avg*n + excluded.avg*excluded.n)/(n+excluded.n), min=MIN(min,excluded.min),
-                      max=MAX(max,excluded.max), n=n+excluded.n""",
-                 (t, m["source_id"], m["name"], ts, m["avg"], m["min"], m["max"], m["n"], recv))
+        points = sorted(((parse_iso(m["ts"]), m) for m in p.get("metrics", [])), key=lambda x: x[0])
+        newest = points[-1][0] if points else 0
+        with st.lock:
+            st.db.executemany(
+                """INSERT INTO metrics(tenant_id,source_id,name,ts_ms,avg,min,max,n,received_ms) VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(tenant_id,source_id,name,ts_ms) DO UPDATE SET
+                     avg=(avg*n + excluded.avg*excluded.n)/(n+excluded.n), min=MIN(min,excluded.min),
+                     max=MAX(max,excluded.max), n=n+excluded.n""",
+                [(t, m["source_id"], m["name"], ts, m["avg"], m["min"], m["max"], m["n"], recv) for ts, m in points])
+        for ts, m in points:
             value = m["min"] if m["name"] in ("reachable", "svc_up") else m["avg"]
             self.engine.on_point(t, m["source_id"], m["name"], ts, value)
         if newest:
@@ -158,7 +159,7 @@ class App:
         if validate_inbound(hb, self.policy) or hb.get("collector_id") != cid:
             return {"error": "policy violation"}, 422
         body = dumps(hb)
-        with LOCK:
+        with LOCK, st.transaction():
             st.x("INSERT INTO collectors(tenant_id,collector_id,last_seen_ms,version,config_hash,policy_version,tz,stats) "
                  "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(tenant_id,collector_id) DO UPDATE SET last_seen_ms=excluded.last_seen_ms,"
                  " version=excluded.version, config_hash=excluded.config_hash, policy_version=excluded.policy_version,"
@@ -536,6 +537,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.parse_args()
     APP = App()
+    http.server.ThreadingHTTPServer.request_queue_size = 256   # default backlog of 5 refused bursts
     threading.Thread(target=engine_loop, daemon=True).start()
     ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
     if APP.reg.get("tls"):

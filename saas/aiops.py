@@ -16,6 +16,7 @@ Observe -> Detect -> Correlate -> Recommend -> (simulated, approved) Act
 """
 import collections
 import json
+import os
 import statistics
 import time
 
@@ -39,6 +40,15 @@ MIN_BASELINE = 20
 Z_OPEN, Z_LEARN, PERSIST = 4.0, 2.5, 3
 CLEAR = 5                       # normal windows needed before an anomaly is considered over
 CORRELATION_WINDOW_MS = 180_000
+BENCHMARK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmark.json")
+
+
+def load_benchmark():
+    try:
+        with open(BENCHMARK_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 ACTIONS = {
     "svc.scale_out": {"label": "Scale out service (+1 replica)", "risk": "low", "reversible": True, "automatable": True,
@@ -102,6 +112,8 @@ class Engine:
         self.lat = collections.defaultdict(lambda: collections.deque(maxlen=2000))
         self.window_ms = 1000
         self.cls = {}                          # alert id -> (classification, peer evidence)
+        self.open_keys = set()                 # (tenant, akey) of open alerts: skips DB lookups on the hot path
+        self.benchmark = load_benchmark()      # measured detector quality, cited in confidence factors
         self.replay_delay = 0                  # set by ingest: how late the current payload arrived
 
     # ---------------------------------------------------------------- helpers
@@ -153,6 +165,7 @@ class Engine:
                 s.recent.append((ts, avg))
                 s.last_ts = ts
                 self.latest[(t, sid, name)] = (ts, avg)
+            self.open_keys |= {(t, r[0]) for r in st.q("SELECT akey FROM alerts WHERE tenant_id=? AND status='open'", (t,))}
             for ent, state, reason in st.q("SELECT entity,state,reason FROM health_history WHERE id IN (SELECT MAX(id) "
                                            "FROM health_history WHERE tenant_id=? GROUP BY entity)", (t,)):
                 self.health[(t, ent)] = (state, reason)
@@ -266,7 +279,7 @@ class Engine:
         st = self.st(t)
         now = now_ms()
         row = st.q1("SELECT id, severity, count, incident_id FROM alerts WHERE tenant_id=? AND akey=? AND status='open'",
-                    (t, akey))
+                    (t, akey)) if (t, akey) in self.open_keys else None
         if row:
             aid, old_sev, count, inc = row
             if kind in ("collector", "stale"):      # condition re-evaluated every tick: refresh, don't count
@@ -286,6 +299,7 @@ class Engine:
                     created_ms,last_ms,count,title,detail) VALUES(?,?,?,?,?,?,?,'open',?,?,?,1,?,?)""",
                    (t, akey, sid, collector_id, signal, kind, sev, first_ms, now, now, title, json.dumps(detail)))
         aid = cur.lastrowid
+        self.open_keys.add((t, akey))
         st.bump(t, "noise", "alerts_raised")
         if kind not in ("collector", "stale"):
             replayed = self.replay_delay > 10_000
@@ -295,6 +309,9 @@ class Engine:
         return aid
 
     def resolve_alert(self, t, akey, reason):
+        if (t, akey) not in self.open_keys:
+            return
+        self.open_keys.discard((t, akey))
         st = self.st(t)
         row = st.q1("SELECT id, incident_id FROM alerts WHERE tenant_id=? AND akey=? AND status='open'", (t, akey))
         if row:
@@ -381,106 +398,110 @@ class Engine:
     def tick(self):
         now = now_ms()
         for t, T in self.reg["tenants"].items():
-            st = self.st(t)
-            H = T["health"]
-            worst, worst_reason = 0, "all collectors and sources healthy"
-            # collectors -------------------------------------------------
-            for c in st.rows("SELECT * FROM collectors WHERE tenant_id=?", (t,)):
-                age = (now - (c["last_seen_ms"] or 0)) / 1000
-                stats = json.loads(c["stats"] or "{}")
-                cid = c["collector_id"]
-                state, reasons = 0, []
-                if age > H["collector_offline_after_s"]:
-                    state = 3
-                    reasons.append(f"offline: no heartbeat for {age:.0f}s (limit {H['collector_offline_after_s']}s)")
-                    if self.health.get((t, cid), ("",))[0] != "Poor":
-                        self.record_latency(t, "offline_detect", int(age * 1000), cid)
-                    self.open_alert(t, f"collector:{cid}:offline", None, "collector.offline", "collector", "high",
-                                    f"Collector {cid} offline (last heartbeat {iso(c['last_seen_ms'])})",
-                                    {"last_seen": iso(c["last_seen_ms"]), "age_s": round(age)}, c["last_seen_ms"],
-                                    collector_id=cid)
-                else:
-                    self.resolve_alert(t, f"collector:{cid}:offline", "heartbeat resumed")
-                    if age > 12:
-                        state, _ = max(state, 1), reasons.append(f"heartbeat late ({age:.0f}s)")
-                    if stats.get("buffer_depth", 0) > 20:
-                        state = max(state, 2)
-                        reasons.append(f"delivery backlog: {stats['buffer_depth']} payloads buffered")
-                    elif stats.get("buffer_depth", 0) > 3:
-                        state = max(state, 1)
-                        reasons.append(f"draining backlog ({stats['buffer_depth']} buffered)")
-                    if stats.get("last_error"):
-                        state = max(state, 1)
-                        reasons.append(f"recent transport error: {stats['last_error'][:60]}")
-                    if (stats.get("cpu_pct") or 0) > 80:
-                        state = max(state, 2)
-                        reasons.append(f"collector CPU {stats['cpu_pct']}%")
-                if not reasons:
-                    reasons.append(f"reporting normally (v{c['version']}, policy {c['policy_version']}, "
-                                   f"heartbeat {age:.0f}s ago)")
-                self._set_health(t, cid, "collector", state, "; ".join(reasons))
-                if state > worst:
-                    worst, worst_reason = state, f"collector {cid}: {reasons[0]}"
-            # sources ----------------------------------------------------
-            open_alerts = collections.defaultdict(list)
-            for a in st.rows("SELECT source_id, signal, kind, severity, detail FROM alerts WHERE tenant_id=? AND "
-                             "status='open' AND source_id IS NOT NULL", (t,)):
-                open_alerts[a["source_id"]].append(a)
-            for src in st.rows("SELECT * FROM sources WHERE tenant_id=?", (t,)):
-                sid = src["source_id"]
-                state, reasons = 0, []
-                newest = 0
-                for name, thr in T["thresholds"].items():
-                    lv = self.latest.get((t, sid, name))
-                    if not lv:
-                        continue
+            with self.st(t).transaction():
+                self._tick_tenant(t, T, now)
+
+    def _tick_tenant(self, t, T, now):
+        st = self.st(t)
+        H = T["health"]
+        worst, worst_reason = 0, "all collectors and sources healthy"
+        # collectors -------------------------------------------------
+        for c in st.rows("SELECT * FROM collectors WHERE tenant_id=?", (t,)):
+            age = (now - (c["last_seen_ms"] or 0)) / 1000
+            stats = json.loads(c["stats"] or "{}")
+            cid = c["collector_id"]
+            state, reasons = 0, []
+            if age > H["collector_offline_after_s"]:
+                state = 3
+                reasons.append(f"offline: no heartbeat for {age:.0f}s (limit {H['collector_offline_after_s']}s)")
+                if self.health.get((t, cid), ("",))[0] != "Poor":
+                    self.record_latency(t, "offline_detect", int(age * 1000), cid)
+                self.open_alert(t, f"collector:{cid}:offline", None, "collector.offline", "collector", "high",
+                                f"Collector {cid} offline (last heartbeat {iso(c['last_seen_ms'])})",
+                                {"last_seen": iso(c["last_seen_ms"]), "age_s": round(age)}, c["last_seen_ms"],
+                                collector_id=cid)
+            else:
+                self.resolve_alert(t, f"collector:{cid}:offline", "heartbeat resumed")
+                if age > 12:
+                    state, _ = max(state, 1), reasons.append(f"heartbeat late ({age:.0f}s)")
+                if stats.get("buffer_depth", 0) > 20:
+                    state = max(state, 2)
+                    reasons.append(f"delivery backlog: {stats['buffer_depth']} payloads buffered")
+                elif stats.get("buffer_depth", 0) > 3:
+                    state = max(state, 1)
+                    reasons.append(f"draining backlog ({stats['buffer_depth']} buffered)")
+                if stats.get("last_error"):
+                    state = max(state, 1)
+                    reasons.append(f"recent transport error: {stats['last_error'][:60]}")
+                if (stats.get("cpu_pct") or 0) > 80:
+                    state = max(state, 2)
+                    reasons.append(f"collector CPU {stats['cpu_pct']}%")
+            if not reasons:
+                reasons.append(f"reporting normally (v{c['version']}, policy {c['policy_version']}, "
+                               f"heartbeat {age:.0f}s ago)")
+            self._set_health(t, cid, "collector", state, "; ".join(reasons))
+            if state > worst:
+                worst, worst_reason = state, f"collector {cid}: {reasons[0]}"
+        # sources ----------------------------------------------------
+        open_alerts = collections.defaultdict(list)
+        for a in st.rows("SELECT source_id, signal, kind, severity, detail FROM alerts WHERE tenant_id=? AND "
+                         "status='open' AND source_id IS NOT NULL", (t,)):
+            open_alerts[a["source_id"]].append(a)
+        for src in st.rows("SELECT * FROM sources WHERE tenant_id=?", (t,)):
+            sid = src["source_id"]
+            state, reasons = 0, []
+            newest = 0
+            for name, thr in T["thresholds"].items():
+                lv = self.latest.get((t, sid, name))
+                if not lv:
+                    continue
+                newest = max(newest, lv[0])
+                lev = level_of(lv[1], thr)
+                if lev:
+                    state = max(state, lev)
+                    reasons.append(f"{METRIC_META.get(name, {}).get('label', name)} {lv[1]:.1f}"
+                                   f"{METRIC_META.get(name, {}).get('unit', '')} -> {STATES[lev]} "
+                                   f"(thresholds {thr})")
+            for name, label in (("reachable", "unreachable from collector"), ("svc_up", "service check failing")):
+                lv = self.latest.get((t, sid, name))
+                if lv:
                     newest = max(newest, lv[0])
-                    lev = level_of(lv[1], thr)
-                    if lev:
-                        state = max(state, lev)
-                        reasons.append(f"{METRIC_META.get(name, {}).get('label', name)} {lv[1]:.1f}"
-                                       f"{METRIC_META.get(name, {}).get('unit', '')} -> {STATES[lev]} "
-                                       f"(thresholds {thr})")
-                for name, label in (("reachable", "unreachable from collector"), ("svc_up", "service check failing")):
-                    lv = self.latest.get((t, sid, name))
-                    if lv:
-                        newest = max(newest, lv[0])
-                        if lv[1] < 0.5:
-                            state = 3
-                            reasons.append(label)
-                for a in open_alerts.get(sid, []):
-                    if a["kind"] in ("anomaly", "anomaly+threshold"):
-                        d = json.loads(a["detail"])
-                        lvl = 2 if SEV_RANK[a["severity"]] >= 3 else 1
-                        state = max(state, lvl)
-                        reasons.append(f"{d['label']} anomalous (z={d.get('z')}, baseline {d.get('baseline')})")
-                    elif a["signal"].startswith("security."):
-                        lvl = 3 if a["severity"] == "critical" else 2
-                        state = max(state, lvl)
-                        reasons.append(f"security: {a['signal'].split('.', 1)[1]} ({a['severity']})")
-                    elif a["signal"] == "log.error_burst":
-                        state = max(state, 1)
-                        reasons.append("error burst in logs")
-                age = (now - newest) / 1000 if newest else None
-                if age is None or age > H["no_data_after_s"]:
-                    state = 3
-                    reasons.insert(0, "no data" + (f" for {age:.0f}s" if age else "") + " - last value NOT shown as current")
-                    self.open_alert(t, f"{sid}:data.stale", sid, "data.stale", "stale", "medium",
-                                    f"No telemetry from {src['service']} source for {age or 0:.0f}s",
-                                    {"age_s": round(age or 0)}, newest or now)
-                else:
-                    self.resolve_alert(t, f"{sid}:data.stale", "data resumed")
-                    if age > H["stale_after_s"]:
-                        state = max(state, 2)
-                        reasons.insert(0, f"stale data: newest metric {age:.0f}s old")
-                if not reasons:
-                    reasons.append("all metrics within baseline and thresholds")
-                self._set_health(t, sid, "source", state, "; ".join(reasons))
-                if state > worst:
-                    worst, worst_reason = state, f"{src['service']} ({sid}): {reasons[0]}"
-            self._set_health(t, "tenant", "tenant", worst, worst_reason)
-            self._auto_resolve_events(t)
-            self._incidents(t)
+                    if lv[1] < 0.5:
+                        state = 3
+                        reasons.append(label)
+            for a in open_alerts.get(sid, []):
+                if a["kind"] in ("anomaly", "anomaly+threshold"):
+                    d = json.loads(a["detail"])
+                    lvl = 2 if SEV_RANK[a["severity"]] >= 3 else 1
+                    state = max(state, lvl)
+                    reasons.append(f"{d['label']} anomalous (z={d.get('z')}, baseline {d.get('baseline')})")
+                elif a["signal"].startswith("security."):
+                    lvl = 3 if a["severity"] == "critical" else 2
+                    state = max(state, lvl)
+                    reasons.append(f"security: {a['signal'].split('.', 1)[1]} ({a['severity']})")
+                elif a["signal"] == "log.error_burst":
+                    state = max(state, 1)
+                    reasons.append("error burst in logs")
+            age = (now - newest) / 1000 if newest else None
+            if age is None or age > H["no_data_after_s"]:
+                state = 3
+                reasons.insert(0, "no data" + (f" for {age:.0f}s" if age else "") + " - last value NOT shown as current")
+                self.open_alert(t, f"{sid}:data.stale", sid, "data.stale", "stale", "medium",
+                                f"No telemetry from {src['service']} source for {age or 0:.0f}s",
+                                {"age_s": round(age or 0)}, newest or now)
+            else:
+                self.resolve_alert(t, f"{sid}:data.stale", "data resumed")
+                if age > H["stale_after_s"]:
+                    state = max(state, 2)
+                    reasons.insert(0, f"stale data: newest metric {age:.0f}s old")
+            if not reasons:
+                reasons.append("all metrics within baseline and thresholds")
+            self._set_health(t, sid, "source", state, "; ".join(reasons))
+            if state > worst:
+                worst, worst_reason = state, f"{src['service']} ({sid}): {reasons[0]}"
+        self._set_health(t, "tenant", "tenant", worst, worst_reason)
+        self._auto_resolve_events(t)
+        self._incidents(t)
 
     def _set_health(self, t, entity, kind, state, reason):
         name = STATES[state]
@@ -659,6 +680,11 @@ class Engine:
             steps.extend(extra or [])
             a = dict(ACTIONS[action], id=action, target=target, why=why)
             factors.insert(0, f"{base:.2f}: base confidence of pattern '{title.split(':')[0]}'")
+            b = self.benchmark
+            if b and b.get("precision") is not None:
+                factors.append(f"measured detector quality ({b['trials']} labelled trials, tools/benchmark.py): "
+                               f"precision {b['precision']:.0%}, recall {b['recall']:.0%}, "
+                               f"{b['false_alarms_per_host_hour']} false alarms per host-hour")
             r = {"title": title, "likely_cause": cause, "confidence": conf(base), "confidence_factors": factors,
                  "reasoning": steps, "action": a, "alternatives": alternatives or [],
                  "root_source": root["source"], "root_service": root["service"]}
