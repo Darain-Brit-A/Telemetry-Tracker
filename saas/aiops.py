@@ -16,6 +16,7 @@ Observe -> Detect -> Correlate -> Recommend -> (simulated, approved) Act
 """
 import collections
 import json
+import os
 import statistics
 import time
 
@@ -39,6 +40,15 @@ MIN_BASELINE = 20
 Z_OPEN, Z_LEARN, PERSIST = 4.0, 2.5, 3
 CLEAR = 5                       # normal windows needed before an anomaly is considered over
 CORRELATION_WINDOW_MS = 180_000
+BENCHMARK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmark.json")
+
+
+def load_benchmark():
+    try:
+        with open(BENCHMARK_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 ACTIONS = {
     "svc.scale_out": {"label": "Scale out service (+1 replica)", "risk": "low", "reversible": True, "automatable": True,
@@ -102,6 +112,7 @@ class Engine:
         self.lat = collections.defaultdict(lambda: collections.deque(maxlen=2000))
         self.window_ms = 1000
         self.cls = {}                          # alert id -> (classification, peer evidence)
+        self.benchmark = load_benchmark()      # measured detector quality, cited in confidence factors
         self.replay_delay = 0                  # set by ingest: how late the current payload arrived
 
     # ---------------------------------------------------------------- helpers
@@ -659,6 +670,11 @@ class Engine:
             steps.extend(extra or [])
             a = dict(ACTIONS[action], id=action, target=target, why=why)
             factors.insert(0, f"{base:.2f}: base confidence of pattern '{title.split(':')[0]}'")
+            b = self.benchmark
+            if b and b.get("precision") is not None:
+                factors.append(f"measured detector quality ({b['trials']} labelled trials, tools/benchmark.py): "
+                               f"precision {b['precision']:.0%}, recall {b['recall']:.0%}, "
+                               f"{b['false_alarms_per_host_hour']} false alarms per host-hour")
             r = {"title": title, "likely_cause": cause, "confidence": conf(base), "confidence_factors": factors,
                  "reasoning": steps, "action": a, "alternatives": alternatives or [],
                  "root_source": root["source"], "root_service": root["service"]}
