@@ -1,0 +1,62 @@
+{
+  "generated_at": "2026-11-20T11:53:23.096Z",
+  "trials": 24,
+  "seed": 7,
+  "runtime_s": 35.4,
+  "recall": 0.95,
+  "precision": 0.724,
+  "false_alarms_per_host_hour": 3.72,
+  "median_detection_delay_s": 3.0,
+  "p95_detection_delay_s": 36.0,
+  "root_cause_accuracy": 0.75,
+  "per_scenario": {
+    "none": {
+      "trials": 4,
+      "detected": 0,
+      "false_alarms": 4,
+      "median_delay_s": null
+    },
+    "cpu_spike": {
+      "trials": 4,
+      "detected": 4,
+      "false_alarms": 0,
+      "median_delay_s": 2.0
+    },
+    "mem_leak": {
+      "trials": 4,
+      "detected": 3,
+      "false_alarms": 4,
+      "median_delay_s": 36.0
+    },
+    "disk_fill": {
+      "trials": 4,
+      "detected": 4,
+      "false_alarms": 4,
+      "median_delay_s": 11.5
+    },
+    "latency_rise": {
+      "trials": 4,
+      "detected": 4,
+      "false_alarms": 6,
+      "median_delay_s": 1.5
+    },
+    "db_saturation": {
+      "trials": 4,
+      "detected": 4,
+      "false_alarms": 3,
+      "median_delay_s": 3.5
+    }
+  },
+  "recall_by_magnitude": {
+    "0.3": 0.86,
+    "0.5": 1.0,
+    "0.75": 1.0,
+    "1.0": 1.0
+  },
+  "harmless_blips_injected": 316,
+  "false_alarm_signals": {
+    "cpu_pct": 15,
+    "latency_ms": 6
+  },
+  "method": "real engine, simulated telemetry with known fault windows, extra noise added (sigma x1.6 on cpu/latency/traffic); 150s warm-up, 60s fault, 60s recovery"
+}
