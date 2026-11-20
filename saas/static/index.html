@@ -9,7 +9,7 @@
 <body>
 <div id="login" class="login hidden">
   <form id="loginform">
-    <div class="tier">TIER 2 · CENTRAL SAAS · METADATA ONLY</div>
+    <div class="tier-chip"><span class="tier-dot"></span>Tier 2 · Central SaaS · Metadata Only</div>
     <h1>AIOps Observability</h1>
     <p class="mut">Sign in to your tenant. Each tenant sees only its own metadata, stored in its own residency region.</p>
     <label>Username<input id="lu" autocomplete="username" value="acme-admin"></label>
@@ -22,11 +22,24 @@
 
 <div id="app" class="hidden">
   <header>
-    <div class="brand"><span class="tier">TIER 2 · SAAS · METADATA ONLY</span><b id="tname"></b></div>
+    <div class="brand">
+      <span class="brand-sub">TIER 2 · SAAS · METADATA ONLY</span>
+      <b id="tname"></b>
+    </div>
     <div id="tstate" class="pill"></div>
     <div class="hmeta" id="hmeta"></div>
     <div class="spacer"></div>
-    <label class="small">Times <select id="tzmode"><option value="utc">UTC</option><option value="src">Source TZ</option><option value="local">My local</option></select></label>
+    <div class="switcher" role="tablist" aria-label="Color Theme">
+      <button id="th-humming" class="active" data-call="setTheme" data-arg="humming">Emerald</button>
+      <button id="th-medcity" data-call="setTheme" data-arg="medcity">Teal</button>
+    </div>
+    <label class="hctl">Times
+      <select id="tzmode">
+        <option value="utc">UTC</option>
+        <option value="src">Source TZ</option>
+        <option value="local">My local</option>
+      </select>
+    </label>
     <span id="who" class="small mut"></span>
     <button class="ghost" data-call="logout">Sign out</button>
   </header>
@@ -42,48 +55,106 @@
     <section class="tab" id="tab-ops">
       <div class="grid4" id="summary"></div>
       <div class="two">
-        <div class="card"><h2>Incidents <span class="mut small">(correlated alerts, ranked root cause, explained recommendation)</span></h2><div id="incidents"></div></div>
+        <div class="card">
+          <h2>Incidents <span class="sub">Correlated alerts, ranked root cause, explained recommendation</span></h2>
+          <div id="incidents"></div>
+        </div>
         <div>
-          <div class="card"><h2>Health map</h2><div id="healthmap" class="hmap"></div></div>
-          <div class="card"><h2>Open alerts</h2><div id="alerts"></div></div>
-          <div class="card"><h2>Health transitions <span class="mut small">(UTC)</span></h2><div id="history" class="scroll"></div></div>
+          <div class="card">
+            <h2>Health map</h2>
+            <div id="healthmap" class="hmap"></div>
+          </div>
+          <div class="card">
+            <h2>Open alerts</h2>
+            <div id="alerts"></div>
+          </div>
+          <div class="card">
+            <h2>Health transitions <span class="sub">UTC</span></h2>
+            <div id="history" class="scroll"></div>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="tab hidden" id="tab-fleet">
-      <div class="card"><h2>Collector fleet</h2><div id="collectors"></div></div>
-      <div class="card"><h2>Monitored sources <span class="mut small">(pseudonymous IDs; hostnames never reach SaaS). Click one for its metrics.</span></h2><div id="sources" class="srcgrid"></div></div>
-      <div class="card hidden" id="detail"><h2 id="dtitle"></h2><div id="dcharts" class="charts"></div></div>
+      <div class="card">
+        <h2>Collector fleet</h2>
+        <div id="collectors"></div>
+      </div>
+      <div class="card">
+        <h2>Monitored sources <span class="sub">Pseudonymous IDs; click one for its metrics</span></h2>
+        <div id="sources" class="srcgrid"></div>
+      </div>
+      <div class="card hidden" id="detail">
+        <h2 id="dtitle"></h2>
+        <div id="dcharts" class="charts"></div>
+      </div>
     </section>
 
     <section class="tab hidden" id="tab-proof">
       <div class="card">
         <h2>Everything SaaS received for this tenant</h2>
         <p class="mut">This is the complete metadata record. Compare a payload's SHA-256 with the collector's egress proof panel: the bytes are identical. No raw log text, usernames, IPs, hostnames or secrets are present.</p>
-        <div class="row"><label>Kind <select id="pkind"><option>metrics</option><option>heartbeat</option><option>all</option></select></label>
-          <input id="sterm" placeholder="search for a raw value, e.g. Sup3rS3cret!"><button data-call="searchMeta">Search SaaS store</button><span id="sres" class="mono"></span></div>
+        <div class="row">
+          <label class="hctl">Kind
+            <select id="pkind">
+              <option>metrics</option>
+              <option>heartbeat</option>
+              <option>all</option>
+            </select>
+          </label>
+          <input id="sterm" placeholder="Search for a raw value, e.g. Sup3rS3cret!">
+          <button data-call="searchMeta">Search SaaS store</button>
+          <span id="sres" class="mono"></span>
+        </div>
         <div class="two narrow">
-          <div class="scroll tall"><table><thead><tr><th>collector</th><th>seq</th><th>received UTC</th><th>sha256</th><th>bytes</th><th></th></tr></thead><tbody id="payloads"></tbody></table></div>
-          <div><div id="pmeta" class="mut small">Select a payload.</div><pre id="pbody"></pre></div>
+          <div class="scroll tall">
+            <table>
+              <thead><tr><th>Collector</th><th>Seq</th><th>Received UTC</th><th>SHA-256</th><th>Bytes</th><th></th></tr></thead>
+              <tbody id="payloads"></tbody>
+            </table>
+          </div>
+          <div>
+            <div id="pmeta" class="mut small">Select a payload.</div>
+            <pre id="pbody"></pre>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="tab hidden" id="tab-slo">
       <div class="grid4" id="slo"></div>
-      <div class="card"><h2>Delivery reliability per collector <span class="mut small">(measured from sequence numbers and payload IDs, not claimed)</span></h2><div id="reliab"></div></div>
-      <div class="card"><h2>Noise reduction</h2><div id="noise"></div></div>
+      <div class="card">
+        <h2>Delivery reliability per collector <span class="sub">Measured from sequence numbers and payload IDs</span></h2>
+        <div id="reliab"></div>
+      </div>
+      <div class="card">
+        <h2>Noise reduction</h2>
+        <div id="noise"></div>
+      </div>
     </section>
 
     <section class="tab hidden" id="tab-settings">
       <div class="two">
-        <div class="card"><h2>Health thresholds <span class="mut small">(Excellent below / Good below / Fair below, else Poor)</span></h2><div id="thr"></div>
-          <button id="savethr" data-call="saveThr">Save thresholds</button> <span id="thrmsg" class="small"></span></div>
-        <div class="card"><h2>Service dependency graph</h2><div id="deps"></div>
-          <h2 style="margin-top:16px">Data residency</h2><div id="resid"></div></div>
+        <div class="card">
+          <h2>Health thresholds <span class="sub">Excellent &lt; / Good &lt; / Fair &lt;, else Poor</span></h2>
+          <div id="thr"></div>
+          <div class="row" style="margin-top:12px;margin-bottom:0">
+            <button id="savethr" data-call="saveThr">Save thresholds</button>
+            <span id="thrmsg" class="small mut"></span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Service dependency graph</h2>
+          <div id="deps"></div>
+          <h2 class="sub-heading">Data residency</h2>
+          <div id="resid"></div>
+        </div>
       </div>
-      <div class="card"><h2>Audit log</h2><div id="audit" class="scroll"></div></div>
+      <div class="card">
+        <h2>Audit log</h2>
+        <div id="audit" class="scroll"></div>
+      </div>
     </section>
   </main>
 </div>
