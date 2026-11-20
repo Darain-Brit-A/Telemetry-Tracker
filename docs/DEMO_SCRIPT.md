@@ -85,7 +85,8 @@ is per series). See ARCHITECTURE §8.
 **Where does the confidence percentage come from?** Two parts, both shown on screen. The rule-based
 factors (pattern base, corroborating signals, deviation strength, persistence, dependency position)
 are a transparent heuristic. Next to them is the measured detector quality from 60 labelled trials
-with extra noise and 800+ harmless blips: precision 95%, recall 96%, 0.5 false alarms per host-hour
+with extra noise and 800+ harmless blips, repeated on 5 seeds: precision 94-97%, recall 92-100%,
+0.3-0.6 false alarms per host-hour
 (`tools/benchmark.py`, docs/BENCHMARK.md). We say plainly that the benchmark uses our own simulator.
 
 **Will it work with our stream?** `tools/stream_adapter.py` maps unknown field names, nested or

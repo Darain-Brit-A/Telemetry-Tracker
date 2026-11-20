@@ -27,7 +27,7 @@ import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from common.util import iso, now_ms  # noqa: E402
+from common.util import iso  # noqa: E402
 from saas.server import App  # noqa: E402
 from setup_env import DEFAULT_THRESHOLDS, HEALTH_SETTINGS, REGIONS  # noqa: E402
 from simulator.stream import Host  # noqa: E402
@@ -43,6 +43,7 @@ SCENARIOS = {  # name -> (affected hosts selector, metrics that should alert)
     "db_saturation": (lambda hs: list(hs), {"cpu_pct", "latency_ms", "mem_pct"}),
 }
 WARM, FAULT, RECOVER = 150, 60, 60
+BENCH_T0_MS = 1_763_600_000_000          # 2025-11-20 00:53 UTC; any fixed instant works
 NOISE_EXTRA = 1.6   # widen the simulator's noise so the benchmark is harder than the live demo
 MAGNITUDES = [0.3, 0.5, 0.75, 1.0]   # fraction of the full fault strength; small faults may be missed
 BLIP_RATE = 1 / 60  # chance per host per window of a harmless 1-2 window spike that must NOT alert
@@ -66,7 +67,9 @@ def trial(name, seed):
         sel, expected = SCENARIOS[name]
         affected = {h.name for h in sel(hosts)}
         total = WARM + FAULT + RECOVER
-        t0_ms = now_ms() - total * 1000
+        # fixed start time: the simulator's waveforms depend on absolute time, so starting at "now"
+        # made the same seed give different results run to run (recall 92-96%)
+        t0_ms = BENCH_T0_MS + seed % 1000 * total * 1000
         f_start = t0_ms + WARM * 1000
         mag = random.choice(MAGNITUDES) if name != "none" else 0
         blips = {}   # host -> (metric, windows left, size)

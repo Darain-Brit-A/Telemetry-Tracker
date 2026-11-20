@@ -88,9 +88,9 @@ format fed through the adapter.
 
 | Quality and scale | Result |
 |---|---|
-| Detector precision / recall (60 labelled trials) | 95% / 96% |
-| False alarms per host-hour of normal data | 0.5 |
-| Root cause correct on cascading faults | 80% |
+| Detector precision / recall (60 labelled trials, 5 seeds) | 94-97% / 92-100% |
+| False alarms per host-hour of normal data | 0.3-0.6 |
+| Root cause correct on cascading faults | 90-100% |
 | Ingest capacity, single process | about 90-107 payloads/s (3,300-3,900 points/s), varying with machine load between runs; 100 collectors at one payload/s each: ~94 accepted/s, zero errors, zero loss |
 
 ## Innovation highlights
