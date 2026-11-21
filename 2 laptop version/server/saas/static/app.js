@@ -9,12 +9,12 @@ function cssVar(name, fallback) {
 }
 
 function setTheme(name) {
-  const mode = name === 'medcity' ? 'medcity' : 'humming';
-  if (mode === 'medcity') document.documentElement.setAttribute('data-theme', 'medcity');
+  const mode = name === 'dark' ? 'dark' : 'light';
+  if (mode === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
   else document.documentElement.removeAttribute('data-theme');
-  const bh = $('th-humming'), bm = $('th-medcity');
-  if (bh) { bh.classList.toggle('active', mode === 'humming'); bh.setAttribute('aria-pressed', String(mode === 'humming')); }
-  if (bm) { bm.classList.toggle('active', mode === 'medcity'); bm.setAttribute('aria-pressed', String(mode === 'medcity')); }
+  const bl = $('th-light'), bd = $('th-dark');
+  if (bl) { bl.classList.toggle('active', mode === 'light'); bl.setAttribute('aria-pressed', String(mode === 'light')); }
+  if (bd) { bd.classList.toggle('active', mode === 'dark'); bd.setAttribute('aria-pressed', String(mode === 'dark')); }
   try { localStorage.setItem('hd-theme', mode); } catch (e) {}
   render();
   if (detailSrc && tab === 'fleet') loadDetail(detailSrc, true);
@@ -22,7 +22,7 @@ function setTheme(name) {
 
 try {
   const saved = localStorage.getItem('hd-theme');
-  if (saved === 'medcity') setTheme('medcity');
+  if (saved === 'dark') setTheme('dark');
 } catch (e) {}
 
 function fmtT(ms, tz) {
@@ -380,12 +380,11 @@ async function doAct(id, op) {
 }
 
 function renderFleet() {
-  $('collectors').innerHTML = D.collectors.length ? `<table><thead><tr><th>Collector</th><th>State</th><th>Last seen</th><th>Version</th><th>Resources</th><th class="num">Buffer</th><th>Sequence</th><th>Connected from</th></tr></thead><tbody>${D.collectors.map(c => `
+  $('collectors').innerHTML = D.collectors.length ? `<table><thead><tr><th>Collector</th><th>State</th><th>Last seen</th><th>Version</th><th>Resources</th><th class="num">Buffer</th><th>Sequence</th></tr></thead><tbody>${D.collectors.map(c => `
     <tr><td><span class="strong">${esc(c.collector_id)}</span><div class="small mut">${esc(c.site)}, ${esc(c.tz)}</div></td><td>${pill(c.state)}<div class="small mut">${esc(c.reason)}</div></td>
     <td>${c.age_s} s ago<div class="small mut">${fmtT(c.last_seen, c.tz)}</div></td><td>${esc(c.version)}<div class="small mut"><span class="mono">${esc(c.config_hash)}</span>, policy ${esc(c.policy_version)}</div></td>
     <td>CPU ${c.stats.cpu_pct ?? '–'}%<div class="small mut">${c.stats.rss_mb ?? '–'} MB memory</div></td><td class="num">${c.stats.buffer_depth ?? 0}</td>
-    <td>${c.stats.seq_created ?? '–'} created, ${c.received} received<div class="small ${c.missing ? 'bad' : 'mut'}">${c.missing ? c.missing + ' missing' : 'no gaps'}</div></td>
-    <td>${c.remote_addr ? `<span class="mono">${esc(c.remote_addr)}</span><div class="small mut">${c.remote_local ? 'This machine' : 'Another machine'}</div>` : '<span class="mut">–</span>'}</td></tr>`).join('')}</tbody></table>`
+    <td>${c.stats.seq_created ?? '–'} created, ${c.received} received<div class="small ${c.missing ? 'bad' : 'mut'}">${c.missing ? c.missing + ' missing' : 'no gaps'}</div></td></tr>`).join('')}</tbody></table>`
     : empty('No collector has connected yet.');
   const val = (L, k) => L[k] ? `${L[k].value} ${UNITS[k]}` : '–';
   $('sources').innerHTML = D.sources.length ? D.sources.map(s => {
