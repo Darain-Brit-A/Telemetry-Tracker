@@ -1,0 +1,87 @@
+<mxfile host="app.diagrams.net" modified="2026-11-20T16:15:00.000Z" agent="AegisOps" version="24.7.17" type="device">
+  <diagram id="aegisops-two-tier-arch" name="Architecture">
+    <mxGraphModel dx="1080" dy="1040" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="780" pageHeight="980" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Wireframe Tier Containers -->
+        <mxCell id="tier1-box" value="Tier 1: local collector" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#787878;fontColor=#373737;verticalAlign=top;align=left;spacingTop=6;spacingLeft=10;fontFamily=Helvetica;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="48" y="118" width="684" height="402" as="geometry" />
+        </mxCell>
+        <mxCell id="tier2-box" value="Tier 2: SaaS" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#787878;fontColor=#373737;verticalAlign=top;align=right;spacingTop=6;spacingRight=10;fontFamily=Helvetica;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="48" y="616" width="684" height="298" as="geometry" />
+        </mxCell>
+
+        <!-- External Sources -->
+        <mxCell id="metric-sources" value="&lt;b&gt;Metric sources&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Agents, SNMP, adapter&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="100" y="32" width="220" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="log-sources" value="&lt;b&gt;Log sources&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Syslog, files, JSON lines&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="460" y="32" width="220" height="54" as="geometry" />
+        </mxCell>
+
+        <!-- Tier 1 Nodes -->
+        <mxCell id="metrics-path" value="&lt;b&gt;Metrics path&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Range check, 1 s windows&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="100" y="156" width="220" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="logs-path" value="&lt;b&gt;Logs path&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Parse, regex redaction&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="460" y="156" width="220" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="raw-store" value="&lt;b&gt;Encrypted raw store&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;AES-256-GCM, OS keystore&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="100" y="244" width="220" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-ml" value="&lt;b&gt;Edge ML&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#373737&quot; style=&quot;font-size:11px;&quot;&gt;Drain templates, secret check&lt;/font&gt;" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#f2f2f2;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="460" y="248" width="220" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="det-gate" value="&lt;b&gt;Deterministic gate&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Allow-list and DLP, final say&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="180" y="344" width="420" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="enc-outbox" value="&lt;b&gt;Encrypted outbox&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;AES-256-GCM at rest&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="265" y="432" width="250" height="66" as="geometry" />
+        </mxCell>
+
+        <!-- Transport Bridge -->
+        <mxCell id="mtls" value="&lt;b&gt;mTLS, signed requests&lt;/b&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#f7f7f7;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="285" y="548" width="210" height="38" as="geometry" />
+        </mxCell>
+
+        <!-- Tier 2 Nodes -->
+        <mxCell id="ingest" value="&lt;b&gt;Ingest&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Validate, decrypt&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="76" y="658" width="176" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="tenant-stores" value="&lt;b&gt;Tenant stores&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Per-tenant keys&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="302" y="652" width="176" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="kms" value="&lt;b&gt;Key management&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Wraps tenant keys&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f7f7f7;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="528" y="658" width="176" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="ml-engine" value="&lt;b&gt;ML engine&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#373737&quot; style=&quot;font-size:11px;&quot;&gt;Isolation forest, classifier&lt;/font&gt;" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#f2f2f2;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="76" y="754" width="274" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="explainer" value="&lt;b&gt;Explainer&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#373737&quot; style=&quot;font-size:11px;&quot;&gt;Features, signals, why&lt;/font&gt;" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#f2f2f2;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="430" y="754" width="274" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="dashboard" value="&lt;b&gt;Dashboard&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#5a5a5a&quot; style=&quot;font-size:11px;&quot;&gt;Incidents, approvals&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#141414;fontColor=#141414;fontFamily=Helvetica;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="280" y="842" width="220" height="54" as="geometry" />
+        </mxCell>
+
+        <!-- Connectors -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="metric-sources" target="metrics-path"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="log-sources" target="logs-path"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#373737;endArrow=none;endFill=0;" edge="1" parent="1" source="metrics-path" target="raw-store"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="logs-path" target="edge-ml"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="metrics-path" target="det-gate"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="390" y="183" /></Array></mxGeometry></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;exitX=0.5;exitY=1;entryX=0.928;entryY=0;" edge="1" parent="1" source="edge-ml" target="det-gate"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="det-gate" target="enc-outbox"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="enc-outbox" target="mtls"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="mtls" target="ingest"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="390" y="634" /><mxPoint x="164" y="634" /></Array></mxGeometry></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="ingest" target="tenant-stores"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="kms" target="tenant-stores"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="tenant-stores" target="ml-engine"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="390" y="736" /><mxPoint x="213" y="736" /></Array></mxGeometry></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;" edge="1" parent="1" source="ml-engine" target="explainer"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#141414;endArrow=classic;endFill=1;exitX=0.5;exitY=1;entryX=1;entryY=0.5;" edge="1" parent="1" source="explainer" target="dashboard"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="567" y="869" /></Array></mxGeometry></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

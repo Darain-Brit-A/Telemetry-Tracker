@@ -1,0 +1,25 @@
+{
+  "policy_version": "2026.11-v1",
+  "description": "Egress allow-list. Shared by the collector (enforced before transmit) and the SaaS (enforced again on ingest). Anything not listed here never leaves the customer environment.",
+  "payload_fields": ["schema", "payload_id", "collector_id", "seq", "kind", "created_at", "window", "policy_version", "sources", "metrics", "events"],
+  "window_fields": ["start", "end"],
+  "source_fields": ["source_id", "role", "service", "site", "tz"],
+  "metric_fields": ["source_id", "ts", "name", "avg", "min", "max", "n"],
+  "metric_names": ["cpu_pct", "mem_pct", "disk_pct", "bw_in_mbps", "bw_out_mbps", "latency_ms", "packet_loss_pct", "reachable", "svc_up", "pm25_ugm3", "pm10_ugm3", "no2_ugm3"],
+  "event_fields": ["source_id", "ts", "category", "severity", "count", "context", "fingerprint"],
+  "event_categories": [
+    "security.auth_failure_burst",
+    "security.secret_in_log",
+    "log.error_burst",
+    "log.recurring_warning",
+    "network.unreachable",
+    "service.down",
+    "source.clock_skew",
+    "security.possible_secret"
+  ],
+  "severities": ["info", "low", "medium", "high", "critical"],
+  "heartbeat_fields": ["schema", "collector_id", "kind", "created_at", "version", "config_hash", "policy_version", "uptime_s", "stats", "tz"],
+  "heartbeat_stats_fields": ["cpu_pct", "rss_mb", "buffer_depth", "seq_created", "seq_delivered", "send_errors", "raw_events_total", "redactions_total", "blocked_payloads", "last_error", "partition", "chaos"],
+  "context_max_len": 200,
+  "string_max_len": 64
+}

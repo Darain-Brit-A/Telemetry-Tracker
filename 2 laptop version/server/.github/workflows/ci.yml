@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests (policy, ingest, detection, correlation, adapter)
+        run: python -m unittest discover -s tests -t tests -v
+      - name: Detector benchmark gate
+        run: python tools/benchmark.py --trials 18 --seed 3 --no-write --min-precision 0.85 --min-recall 0.85

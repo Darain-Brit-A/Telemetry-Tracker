@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Collector</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="brand-sub">Tier 1: customer environment, raw data stays here</span>
+    <span id="cid" class="brand-name">Collector</span>
+  </div>
+  <div class="hmeta" id="kv"></div>
+</header>
+<main>
+  <div class="two even">
+    <div class="card">
+      <h2>Link to SaaS and buffer</h2>
+      <div class="facts" id="link"></div>
+      <div class="row actions">
+        <button id="bpart" class="ghost" data-call="toggle" data-arg="partition">Simulate SaaS outage</button>
+        <button id="bchaos" class="ghost" data-call="toggle" data-arg="chaos">Chaos delivery</button>
+      </div>
+      <p class="small mut note">Outage: payloads keep being produced and are buffered in the local outbox (SQLite, survives restarts). On reconnect they are replayed in sequence order and the SaaS de-duplicates them by payload ID. Chaos delivery re-sends duplicates and shuffles the order.</p>
+    </div>
+    <div class="card">
+      <h2>Inject a scenario <span class="sub">Simulated telemetry stream</span></h2>
+      <div class="row">
+        <label class="field">Target host <select id="host"></select></label>
+      </div>
+      <div class="scen">
+        <button class="sec" data-call="scn" data-arg="secret_in_log">Secret in raw log</button>
+        <button class="sec" data-call="scn" data-arg="failed_logins">Repeated failed logins</button>
+        <button class="sec" data-call="scn" data-arg="cpu_spike">CPU off baseline</button>
+        <button class="sec" data-call="scn" data-arg="mem_leak">Memory leak</button>
+        <button class="sec" data-call="scn" data-arg="latency_rise" data-arg2="site">Site latency and loss</button>
+        <button class="sec" data-call="scn" data-arg="db_saturation" data-arg2="site">Cascading DB saturation</button>
+        <button class="sec" data-call="scn" data-arg="disk_fill">Disk filling</button>
+        <button class="sec" data-call="scn" data-arg="service_down">Service down</button>
+        <button class="sec" data-call="scn" data-arg="fleet_load" data-arg2="site">Fleet-wide load spike</button>
+        <button class="sec" data-call="scn" data-arg="source_silent">Source goes silent</button>
+        <button class="sec" data-call="scn" data-arg="out_of_order" data-arg2="site">Out-of-order events</button>
+        <button class="sec" data-call="scn" data-arg="night_spike">Night spike (seasonal)</button>
+        <button data-call="scn" data-arg="heal" data-arg2="site">Heal all</button>
+      </div>
+      <p class="small mut note" id="scnmsg"></p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Raw local events <span class="sub">Collector only; raw and redacted</span></h2>
+    <p class="small mut">Lines where something was redacted are pinned on top. Left: exactly what arrived from the source, secrets included. Right: the same line after local scrubbing. Neither column is ever transmitted; only aggregates and templated summaries leave. Air-quality monitors also send their exact GPS position, which is treated as sensitive: it is kept here and never reaches the SaaS.</p>
+    <div class="scroll table-wrap note">
+      <table class="wide">
+        <thead><tr><th class="col-time">Time (UTC)</th><th class="col-host">Host</th><th>Raw (local only)</th><th>Redacted view</th></tr></thead>
+        <tbody id="raw"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Egress proof <span class="sub">Exact payload bytes before they leave</span></h2>
+    <p class="small mut">Every payload is stored here before it is sent. The SHA-256 is computed on the exact bytes sent; the SaaS shows the hash it received, so the two can be compared. Select a row to see the body.</p>
+    <form id="searchform" class="row note">
+      <label class="field"><input type="checkbox" id="showhb"> Show heartbeats</label>
+      <input id="term" type="search" placeholder="Search a raw value, e.g. Sup3rS3cret!" aria-label="Search for a raw value">
+      <button type="submit">Prove it stayed local</button>
+    </form>
+    <p id="searchres" class="small note"></p>
+    <div class="two even note">
+      <div class="scroll table-wrap">
+        <table>
+          <thead><tr><th class="num">Seq</th><th>Kind</th><th>Created (UTC)</th><th class="num">Bytes</th><th>SHA-256</th><th>Status</th><th class="num">Tries</th></tr></thead>
+          <tbody id="eg"></tbody>
+        </table>
+      </div>
+      <div>
+        <div id="egmeta" class="small mut">Select a payload to see its contents.</div>
+        <pre id="egbody"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Data allow-list <span class="sub" id="alver"></span></h2>
+    <p class="small mut">Only the items ticked here may leave this site; everything else is removed before the payload is hashed and sent. The list is the policy shared with the SaaS. This site can make it stricter by unticking items, but it cannot add anything: a new field needs a new policy version agreed on both sides.</p>
+    <p id="alsum" class="small note"></p>
+    <div id="allow" class="allow note"></div>
+  </div>
+
+  <div class="two even">
+    <div class="card">
+      <h2>Local security findings <span class="sub">Identities stay local</span></h2>
+      <div class="scroll table-wrap">
+        <table>
+          <thead><tr><th>Time (UTC)</th><th>Host</th><th>Finding</th></tr></thead>
+          <tbody id="find"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="card">
+        <h2>Pseudonym map <span class="sub">Never sent</span></h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Host</th><th>ID sent to the SaaS</th><th>Role</th><th>Service</th></tr></thead>
+            <tbody id="pseudo"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Retention</h2>
+        <div class="row">
+          <label class="field">Keep raw events for <input id="ret" type="number" min="1" class="w-ret"> minutes</label>
+          <button data-call="setRet">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Local audit log <span class="sub">Data-transfer controls and simulated remediation</span></h2>
+    <div class="scroll short table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody id="audit"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+<script src="/ui.js"></script>
+</body>
+</html>

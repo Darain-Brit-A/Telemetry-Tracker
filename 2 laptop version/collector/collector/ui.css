@@ -1,0 +1,31 @@
+/* Collector console: page layout only. Everything else comes from /base.css (common/ui/base.css),
+ * the design system shared with the SaaS dashboard. */
+
+.facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--fs-sm); color: var(--color-text-secondary); }
+.facts .v { color: var(--color-text-primary); font-weight: 600; }
+
+.scen { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(170px, 100%), 1fr)); gap: 8px; margin-top: 12px; }
+.scen button { width: 100%; }
+
+/* raw vs redacted: secrets highlighted on the left, redaction markers on the right */
+.secret { color: var(--status-poor); background: var(--status-poor-bg); border-radius: var(--radius-sm); padding: 0 3px; }
+.redacted { color: var(--color-success); font-weight: 600; }
+tr.raw-hit { background: var(--status-poor-bg); }
+table.wide { min-width: 600px; }
+td.mono { overflow-wrap: anywhere; }
+.col-time { width: 104px; }
+.col-host { width: 84px; }
+.w-ret { width: 84px; }
+
+@media (max-width: 640px) {
+  .scen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .allow label { min-height: 40px; }
+}
+
+/* data allow-list: one fieldset per group, checkboxes in a responsive grid */
+.allow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
+.allow fieldset { margin: 0; padding: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-ctl); min-width: 0; }
+.allow legend { padding: 0 4px; font-size: var(--fs-sm); font-weight: 600; }
+.allow label { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: var(--fs-sm); }
+.allow label.off .mono { color: var(--color-text-muted); text-decoration: line-through; }
+.allow .req { margin-left: auto; font-size: var(--fs-sm); color: var(--color-text-muted); }

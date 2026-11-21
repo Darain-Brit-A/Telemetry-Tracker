@@ -4,10 +4,16 @@ data/
 __pycache__/
 *.pyc
 
-# collector bundles and the 2-laptop server copy / collector package contain private keys,
-# collector secrets and the OpenAQ key - never commit them
-2 laptop version/server/
-2 laptop version/collector/
+# generated/private files in the 2-laptop server and collector copies
+2 laptop version/server/config/
+2 laptop version/server/data/
+2 laptop version/server/__pycache__/
+2 laptop version/collector/config/
+2 laptop version/collector/data/
+2 laptop version/collector/__pycache__/
+2 laptop version/collector/.aiops-collector-package/
+2 laptop version/collector/.aiops-collector-package
+2 laptop version/server/.git
 2 laptop version/collector.zip
 export/
 *.zip

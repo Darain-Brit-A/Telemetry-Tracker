@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIOps Observability</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="loginform">
+    <p class="small mut">Tier 2: central SaaS, metadata only</p>
+    <h1>AIOps Observability</h1>
+    <p class="mut">Sign in to your tenant. Each tenant sees only its own metadata, stored in its own residency region.</p>
+    <label>Username<input id="lu" autocomplete="username" value="acme-admin"></label>
+    <label>Password<input id="lp" type="password" autocomplete="current-password"></label>
+    <button type="submit">Sign in</button>
+    <p id="lerr" class="bad small" role="alert"></p>
+    <p class="small mut">Demo users: acme-admin, acme-viewer, globex-admin, cityair-admin (passwords in README)</p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">
+      <span class="brand-sub">Tier 2: SaaS, metadata only</span>
+      <span id="tname" class="brand-name"></span>
+    </div>
+    <span id="tstate" class="pill"></span>
+    <div class="hmeta" id="hmeta"></div>
+    <div class="spacer"></div>
+    <div class="switcher" role="group" aria-label="Colour theme">
+      <button id="th-humming" class="active" data-call="setTheme" data-arg="humming" aria-pressed="true">Emerald</button>
+      <button id="th-medcity" data-call="setTheme" data-arg="medcity" aria-pressed="false">Teal</button>
+    </div>
+    <label class="hctl">Time zone
+      <select id="tzmode">
+        <option value="utc">UTC</option>
+        <option value="src">Source</option>
+        <option value="local">Local</option>
+      </select>
+    </label>
+    <span id="who" class="small mut"></span>
+    <button class="ghost" data-call="logout">Sign out</button>
+  </header>
+  <nav aria-label="Sections">
+    <button data-tab="ops" class="on">Operations</button>
+    <button data-tab="fleet">Fleet &amp; sources</button>
+    <button data-tab="proof">Received metadata</button>
+    <button data-tab="slo">Performance &amp; reliability</button>
+    <button data-tab="settings">Thresholds &amp; audit</button>
+  </nav>
+
+  <main>
+    <section class="tab" id="tab-ops">
+      <div class="grid4" id="summary"></div>
+      <div class="two" id="monitoring">
+        <div class="card">
+          <div class="card-head"><h2 id="mon-a-title">Monitoring</h2></div>
+          <canvas id="mon-a" class="chart-lg"></canvas>
+          <div id="mon-a-legend" class="legend small"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2 id="mon-b-title">Trend</h2>
+            <select id="mon-metric" aria-label="Metric shown in the charts"></select>
+          </div>
+          <canvas id="mon-b" class="chart-lg"></canvas>
+          <div id="mon-b-legend" class="legend small"></div>
+        </div>
+      </div>
+      <div class="two">
+        <div class="card">
+          <h2>Incidents <span class="sub">Correlated alerts with root cause and recommendation</span></h2>
+          <div id="incidents"></div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h2>Health map</h2>
+            <div id="healthmap" class="hmap"></div>
+          </div>
+          <div class="card">
+            <h2>Open alerts</h2>
+            <div id="alerts" class="table-wrap"></div>
+          </div>
+          <div class="card">
+            <h2>Health transitions</h2>
+            <div id="history" class="scroll"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab hidden" id="tab-fleet">
+      <div class="card">
+        <h2>Collector fleet</h2>
+        <div id="collectors" class="table-wrap"></div>
+      </div>
+      <div class="card">
+        <h2>Monitored sources <span class="sub">Pseudonymous IDs; select one for its charts</span></h2>
+        <div id="sources" class="srcgrid"></div>
+      </div>
+      <div class="card hidden" id="detail">
+        <div class="card-head">
+          <h2 id="dtitle"></h2>
+          <button class="ghost" data-call="closeDetail">Close</button>
+        </div>
+        <div id="dstatus" class="detail-status"></div>
+        <div id="dcharts" class="charts"></div>
+      </div>
+    </section>
+
+    <section class="tab hidden" id="tab-proof">
+      <div class="card">
+        <h2>Everything the SaaS received <span class="sub">Complete metadata record for this tenant</span></h2>
+        <p class="mut">Compare a payload's SHA-256 with the collector's egress proof panel: the bytes are identical. No raw log text, usernames, IP addresses, host names or secrets are present.</p>
+        <form id="searchform" class="row">
+          <label class="field">Kind
+            <select id="pkind">
+              <option>metrics</option>
+              <option>heartbeat</option>
+              <option>all</option>
+            </select>
+          </label>
+          <input id="sterm" type="search" placeholder="Search for a raw value, e.g. Sup3rS3cret!" aria-label="Search the SaaS store for a raw value">
+          <button type="submit">Search SaaS store</button>
+        </form>
+        <p id="sres" class="small note"></p>
+        <div class="two even">
+          <div class="scroll tall table-wrap">
+            <table>
+              <thead><tr><th>Collector</th><th class="num">Seq</th><th>Received</th><th>SHA-256</th><th class="num">Bytes</th><th>Note</th></tr></thead>
+              <tbody id="payloads"></tbody>
+            </table>
+          </div>
+          <div>
+            <div id="pmeta" class="mut small">Select a payload to see its contents.</div>
+            <pre id="pbody"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab hidden" id="tab-slo">
+      <div class="grid4" id="slo"></div>
+      <div class="card">
+        <h2>Delivery reliability per collector <span class="sub">Measured from sequence numbers and payload IDs</span></h2>
+        <div id="reliab"></div>
+      </div>
+      <div class="card">
+        <h2>Noise reduction</h2>
+        <div id="noise"></div>
+      </div>
+    </section>
+
+    <section class="tab hidden" id="tab-settings">
+      <div class="two">
+        <div class="card">
+          <h2>Health thresholds <span class="sub">Manual limits, or learned from each source's baseline</span></h2>
+          <div id="thr"></div>
+          <div class="row actions">
+            <button id="savethr" data-call="saveThr">Save thresholds</button>
+            <span id="thrmsg" class="small mut"></span>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h2>Service dependency graph</h2>
+            <div id="deps"></div>
+          </div>
+          <div class="card">
+            <h2>Data residency</h2>
+            <div id="resid"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Audit log</h2>
+        <div id="audit" class="scroll table-wrap"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

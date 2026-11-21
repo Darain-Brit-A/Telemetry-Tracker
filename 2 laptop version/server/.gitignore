@@ -1,0 +1,9 @@
+# generated secrets, certificates and stored data (recreate with setup_env.py / run_all.py)
+config/
+data/
+__pycache__/
+*.pyc
+
+# collector bundles (contain secrets and private keys)
+export/
+*.zip
