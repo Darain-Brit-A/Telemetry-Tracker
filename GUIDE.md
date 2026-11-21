@@ -184,6 +184,14 @@ or set the `AIOPS_OPENAQ_API_KEY` environment variable. `run_all.py` then starts
 3. Data takes the normal secure path: poller → collector `/ingest` (token) → allow-list and DLP → mutual
    TLS → SaaS → AI engine.
 
+**A sensitive field you can demo:** each monitor's **exact GPS position** (latitude and longitude from the
+API) is treated as sensitive. It reaches the collector in the raw event, where the console's raw view shows
+it highlighted and the redacted view shows `[REDACTED:geo]`. It is not an allow-listed field, and the
+outbound secret scan would block it anyway, so it never reaches the SaaS. To prove it: copy a latitude from
+the raw view of an air collector's console (e.g. http://127.0.0.1:9104), search it with **Prove it stayed
+local** (found locally, 0 in outbound payloads), then search it on the dashboard under **Received
+metadata** (0 matches) while the monitor's PM2.5 readings are all there.
+
 **Be aware:** official monitors publish every 15-60 minutes, usually 1-2 hours late. Each card shows how
 old its reading is; a monitor with nothing for 3 hours turns stale instead of repeating an old value.
 
@@ -309,7 +317,8 @@ the unit tests and a benchmark gate on Linux and Windows for every push (`.githu
 5. **Reliability**: *Simulate SaaS outage* for 20 s, switch off; show zero loss and no duplicates under
    *Performance & reliability* (1 min).
 6. **Real data**: sign in as `cityair-admin`; show the city comparison, Delhi's trend, a monitor's learned
-   limits, and an "Air quality" incident with its CPCB category (2 min).
+   limits, and an "Air quality" incident with its CPCB category. Then show the sensitive GPS field staying
+   on the collector (section 6) (2 min).
 
 ---
 

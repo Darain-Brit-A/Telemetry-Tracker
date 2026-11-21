@@ -11,6 +11,8 @@ const fact=(label,value,cls)=>`<span>${label} <span class="v ${cls||''}">${value
 function hiSecrets(raw){
   let h=esc(raw);
   const rx=[/(password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret)(\s*[=:]\s*)([^\s,;&"\\]+)/gi,/\b(AKIA[0-9A-Z]{16})\b/g,/\b(eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{4,})/g,/(Bearer\s+)([\w.~+\/=-]{8,})/g,/\b(\d{1,3}(?:\.\d{1,3}){3})\b/g];
+  // exact GPS position (air-quality monitors): sensitive, kept on this collector only
+  h=h.replace(/(&quot;(?:lat|latitude|lon|lng|longitude)&quot;\s*:\s*)(-?\d{1,3}\.\d{3,})/gi,'$1<span class="secret">$2</span>');
   h=h.replace(rx[0],(m,a,b,c)=>`${a}${b}<span class="secret">${c}</span>`).replace(rx[1],'<span class="secret">$1</span>').replace(rx[2],'<span class="secret">$1</span>').replace(rx[3],'$1<span class="secret">$2</span>').replace(rx[4],'<span class="secret">$1</span>');
   return h;
 }
