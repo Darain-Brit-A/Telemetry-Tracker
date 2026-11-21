@@ -141,6 +141,15 @@ Each collector has a console on its own machine (http://127.0.0.1:9101 and up). 
 local: the raw event store, the outbox (every payload with its digest and what the data policy dropped),
 local findings, the audit log, and **"Prove it stayed local"** search.
 
+**Data allow-list.** The console lists every metric, event category, source label and event detail that
+may leave the site, as ticked boxes. The list is the policy shared with the SaaS (`common/data_policy.json`).
+The customer can untick an item to stop sending it; the next payload leaves without it, the egress proof
+shows what was removed (for example `metrics 'mem_pct' (not allow-listed)`), the change is written to the
+local audit log and saved in the collector's config, and the SaaS keeps accepting the smaller payloads.
+The customer cannot add anything: an item the shared policy does not contain, or a field the protocol needs
+(`source_id`, `ts`, `category`, `severity`, `count`), is refused. A new field needs a new policy version
+agreed on both tiers.
+
 Buttons (inject a scenario, then watch the SaaS dashboard):
 
 | Button | What happens | What the SaaS should show |
@@ -386,7 +395,7 @@ Syslog can be sent over UDP to the collector's syslog port (5141 and up), from t
 
 | Check | Command | Current result |
 |---|---|---|
-| Unit tests | `python -m unittest discover -s tests -t tests` | 109 tests, all pass |
+| Unit tests | `python -m unittest discover -s tests -t tests` | 117 tests, all pass |
 | End-to-end validation on the running system (18 checks: latency targets, zero loss through an outage, duplicates, tenant isolation, mutual TLS, secrets never leaving, remediation policy, ...) | `python tools/verify.py --spawn` | 18 of 18 pass, report in `docs/VALIDATION_REPORT.md` |
 | Detector benchmark (labelled faults, precision / recall) | `python tools/benchmark.py --trials 60 --seed 7` | see section 7; `--threshold-mode manual` to compare |
 | Seasonal benchmark | `python tools/benchmark.py --seasonal --trials 20 --seed 1` | see section 7 |

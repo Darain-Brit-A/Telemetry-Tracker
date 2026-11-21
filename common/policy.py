@@ -151,7 +151,8 @@ def enforce(payload, policy):
                     continue
                 row[k] = _clip(v, policy, "context_max_len" if k == "context" else "string_max_len")
             if extra_check and not extra_check(row):
-                dropped.append(f"{label}[{i}] (rejected: value not allow-listed)")
+                value = row.get("name") or row.get("category") or "?"
+                dropped.append(f"{label} '{value}' (not allow-listed)")
                 continue
             out.append(row)
         return out
@@ -162,7 +163,48 @@ def enforce(payload, policy):
     clean["events"] = filter_list(clean.get("events"), policy["event_fields"], "events",
                                   lambda r: r.get("category") in policy["event_categories"]
                                   and r.get("severity") in policy["severities"])
-    return clean, dropped
+    return clean, list(dict.fromkeys(dropped))      # one line per distinct reason
+
+
+# ---------------------------------------------------------------- site restrictions (tighten only)
+# The allow-list above is the contract shared by both tiers: the SaaS rejects anything outside it.
+# A customer site may make it STRICTER for its own collector (stop sending a metric, an event category,
+# a source label or an optional event detail). It can never widen it: adding a field the SaaS does not
+# accept needs a new policy version agreed on both sides.
+TIGHTENABLE = {"metric_names": "Metrics", "event_categories": "Event categories",
+               "source_fields": "Source labels", "event_fields": "Event details"}
+REQUIRED = {"source_fields": {"source_id"},                                   # needed by the protocol
+            "event_fields": {"source_id", "ts", "category", "severity", "count"}}
+
+
+def restriction_error(base, key, name):
+    """Why `name` in `key` cannot be withheld (None if it can)."""
+    if key not in TIGHTENABLE:
+        return f"'{key}' cannot be changed at the site"
+    if name not in base.get(key, []):
+        return (f"'{name}' is not in the shared policy {base['policy_version']}; a site can only make the "
+                f"allow-list stricter, widening it needs a new policy version agreed with the SaaS")
+    if name in REQUIRED.get(key, ()):
+        return f"'{name}' is required by the protocol and cannot be withheld"
+    return None
+
+
+def clean_restrictions(base, restrictions):
+    """Keep only valid withheld items: {key: sorted list}."""
+    out = {}
+    for key, names in (restrictions or {}).items():
+        keep = sorted({n for n in names or [] if restriction_error(base, key, n) is None})
+        if keep:
+            out[key] = keep
+    return out
+
+
+def restricted_policy(base, restrictions):
+    """The shared policy minus what this site withholds (never adds anything)."""
+    policy = dict(base)
+    for key, names in clean_restrictions(base, restrictions).items():
+        policy[key] = [x for x in base[key] if x not in names]
+    return policy
 
 
 def _is_iso(v):
