@@ -13,6 +13,7 @@ used once, to create the demo CA.
 | **[GUIDE.md](GUIDE.md)** | **Start here: the complete guide (run on one or two laptops, demo tour, how the AI works, security, testing, troubleshooting)** |
 | [docs/PHASE1_PROBLEM_AND_IDEATION.md](docs/PHASE1_PROBLEM_AND_IDEATION.md) | Phase 1: problem, use cases, features and MVP, what stays local, 24-hour plan |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Phase 2: trust boundary, every hop, payload schema, security, AIOps, reliability, scaling |
+| [docs/VIVA_SCRIPT.md](docs/VIVA_SCRIPT.md) | Viva preparation: what the project does, a speaking script per phase, likely questions with answers, demo order, numbers |
 | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | Phase 4: live demo for every Section 8 scenario and answers to the Section 7 questions |
 | [docs/VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) | Phase 3: end-to-end results from `tools/verify.py` (latency, zero loss, isolation, ...) |
 | [docs/BENCHMARK.md](docs/BENCHMARK.md) | Measured detector precision, recall, false alarms and root-cause accuracy |

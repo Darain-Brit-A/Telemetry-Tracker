@@ -40,9 +40,10 @@ and rejects violations.
 a payload. Context strings are generated from templates. As a last line, the serialized payload is
 DLP-scanned and blocked if a credential pattern appears. The SaaS DLP-scans again on ingest.
 
-**How are collectors authenticated and data encrypted?** TLS ≥ 1.2 with a pinned private CA and
-hostname verification; every request is HMAC-SHA256 signed with a per-collector secret plus a
-timestamp (±300 s anti-replay). The tenant is derived from the credential.
+**How are collectors authenticated and data encrypted?** Mutual TLS 1.3: the collector trusts only the
+private CA and checks the server name; the SaaS requires the collector's own client certificate and pins
+its fingerprint to that collector. Every request is also HMAC-SHA256 signed with a per-collector secret
+plus a timestamp (±300 s anti-replay). The tenant is derived from the credential.
 
 **Can you open the egress proof panel and show the last payload?** Yes: collector console, egress
 panel, top row. The SaaS "Received metadata" tab shows the same SHA-256.
