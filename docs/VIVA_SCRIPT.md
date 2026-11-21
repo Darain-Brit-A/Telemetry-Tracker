@@ -111,6 +111,7 @@ categories with severity and counts, pseudonymous source IDs, and collector hear
 | Question | Answer |
 |---|---|
 | How does the collector decide what may be sent? | Payloads are built only from aggregates and templates, then filtered against the allow-list in `common/data_policy.json`. Unknown fields are dropped and shown on the egress proof panel. The SaaS applies the same allow-list again. |
+| Can the customer change the allow-list? | Only to make it stricter. The collector console lists every allowed item as a ticked box; unticking one stops it leaving the site from the next payload, and the change is audited. Adding a field is refused at the site: the SaaS would reject it, so it needs a new policy version agreed on both sides. |
 | What if a developer accidentally puts raw text in a payload? | The serialized payload is scanned for secrets (rules plus an entropy check) right before sending, and blocked if anything is found. The SaaS scans again on arrival. |
 | What if a collector's secret is stolen? | It is useless without that collector's private key (mutual TLS), and vice versa. You disable the collector in the registry and re-enrol it. |
 | How are tenants kept apart? | Tenant derived from the credential, per-tenant queries, per-region stores; the validation run shows Globex requesting Acme incident IDs gets nothing. |
@@ -128,7 +129,7 @@ categories with severity and counts, pseudonymous source IDs, and collector hear
 > latency targets, a secret in a log, brute-force logins, anomaly detection, an organiser-format stream with
 > unknown field names, network degradation, correlation and root cause, remediation with approval and
 > rollback, collector offline detection, a SaaS outage with zero loss, duplicate and out-of-order delivery,
-> mutual TLS, tenant isolation and normal demand spikes. All 18 pass. There are also 112 unit tests, and a
+> mutual TLS, tenant isolation and normal demand spikes. All 18 pass. There are also 117 unit tests, and a
 > detector benchmark with labelled faults that runs in CI on Linux and Windows for every push."
 
 **Member C** on measured AI quality:
@@ -180,7 +181,8 @@ needs internet; the rest does not.
 | 10 | Console, *Simulate SaaS outage* for 20 s, then restore; Performance & reliability | "The collector buffered every payload and replayed it: no gaps, no duplicates." |
 | 11 | Sign in as `cityair-admin` | "Now real data: 16 official monitors in four cities. Delhi's evening pollution peaks, colour-coded by India's CPCB categories." |
 | 12 | Console :9104, raw events; then search a latitude | "Each monitor's exact GPS position is treated as sensitive. It is highlighted here, redacted on the right, and searching it on the SaaS finds zero matches, while all the readings are there." |
-| 13 | (optional) Thresholds & audit | "Limits are learned per source by default; a safety limit always applies; every change is audited." |
+| 13 | (optional) Console :9101, *Data allow-list*, untick `mem_pct`; open the newest metrics payload | "The customer decides what leaves, but only in one direction. Memory is now removed before the payload is hashed; the egress proof says so, the SaaS still accepts it, and the change is in the audit log. Tick it again to restore." |
+| 14 | (optional) Thresholds & audit | "Limits are learned per source by default; a safety limit always applies; every change is audited." |
 
 **If something goes wrong:** say what happened and move on. If the internet is down, skip steps 11 and 12;
 everything else is local. If a scenario does not show, click *Heal all* and run it again after 20 seconds.
@@ -208,7 +210,7 @@ everything else is local. If a scenario does not show, click *Heal all* and run 
 | What | Number |
 |---|---|
 | End-to-end validation | 18 of 18 checks pass |
-| Unit tests | 112 pass (CI on Linux and Windows) |
+| Unit tests | 117 pass (CI on Linux and Windows) |
 | Alert latency | p95 3.8 s (target 15 s) |
 | Collection to dashboard | p95 about 2.4 s (target 10 s) |
 | Collector offline detection | about 30 s (target 60 s) |

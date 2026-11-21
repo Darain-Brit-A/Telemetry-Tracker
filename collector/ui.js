@@ -34,7 +34,22 @@ async function load(){
   $('eg').innerHTML=eg.map(e=>`<tr class="click ${e.payload_id===selected?'sel':''}" data-call="pick" data-arg="${esc(e.payload_id)}"><td class="num">${e.seq??'–'}</td><td>${esc(e.kind)}</td><td>${t(e.created_ms)}</td><td class="num">${e.bytes}</td><td class="mono">${esc(e.sha256.slice(0,12))}…</td><td>${status(e.status)}</td><td class="num">${e.attempts}</td></tr>`).join('')||emptyRow(7,'No payloads yet.');
   $('find').innerHTML=S.findings.map(f=>`<tr><td>${esc(f.ts.slice(11,19))}</td><td>${esc(f.host)}</td><td><span class="strong">${esc(f.kind)}</span><div class="small mut">${esc(f.detail)}</div>${f.raw_redacted?`<div class="mono redacted">${esc(f.raw_redacted)}</div>`:''}</td></tr>`).join('')||emptyRow(3,'No findings yet.');
   $('pseudo').innerHTML=S.pseudonyms.map(p=>`<tr><td>${esc(p.host)}</td><td class="mono">${esc(p.source_id)}</td><td>${esc(p.role)}</td><td>${esc(p.service)}</td></tr>`).join('')||emptyRow(4,'No hosts seen yet.');
+  renderAllow(S.allow_list);
   $('audit').innerHTML=S.audit.map(a=>`<tr><td>${dt(a.ts_ms)}</td><td>${esc(a.actor)}</td><td>${esc(a.action)}</td><td class="small mut break">${esc(a.detail)}</td></tr>`).join('')||emptyRow(4,'No audit entries yet.');
+}
+let allowSig='';
+function renderAllow(a){
+  const sig=JSON.stringify(a); if(sig===allowSig) return; allowSig=sig;   // redraw only when it changes
+  $('alver').textContent=`Policy ${a.policy_version}`;
+  $('alsum').innerHTML=a.withheld?`This site withholds <span class="strong">${a.withheld}</span> item${a.withheld>1?'s':''} of the shared policy. The SaaS accepts the smaller payloads unchanged.`
+    :'This site sends everything the shared policy allows.';
+  $('allow').innerHTML=a.groups.map(g=>`<fieldset><legend>${esc(g.label)}</legend>${g.items.map(i=>
+    `<label class="${i.allowed?'':'off'}"><input type="checkbox" data-key="${esc(g.key)}" value="${esc(i.name)}"${i.allowed?' checked':''}${i.locked?' disabled':''}> <span class="mono">${esc(i.name)}</span>${i.locked?'<span class="req">Required</span>':''}</label>`).join('')}</fieldset>`).join('');
+}
+async function setAllowed(el){
+  const r=await post('/api/allowlist',{key:el.dataset.key,name:el.value,allowed:el.checked});
+  if(r.error){el.checked=!el.checked; $('alsum').innerHTML=`<span class="bad">${esc(r.error)}</span>`; allowSig='';}
+  load();
 }
 async function pick(id){
   selected=id; const r=await (await fetch('/api/egress/'+id)).json();
@@ -54,4 +69,5 @@ const CALLS={toggle,scn,search,setRet,pick};
 document.addEventListener('click',e=>{const el=e.target.closest('[data-call]');if(!el||el.disabled||!CALLS[el.dataset.call])return;CALLS[el.dataset.call](el.dataset.arg,el.dataset.arg2);});
 $('searchform').addEventListener('submit',e=>{e.preventDefault();search();});
 $('showhb').addEventListener('change',()=>load());
+$('allow').addEventListener('change',e=>{if(e.target.matches('input[type=checkbox]'))setAllowed(e.target);});
 setInterval(load,1000); load();

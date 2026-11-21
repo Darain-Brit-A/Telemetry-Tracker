@@ -33,11 +33,12 @@ import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from common.policy import CREDENTIAL_TYPES, dlp_scan, enforce, load_policy, pseudonymize, redact_with_entropy  # noqa: E402
+from common.policy import (CREDENTIAL_TYPES, REQUIRED, TIGHTENABLE, clean_restrictions, dlp_scan, enforce,  # noqa: E402
+                           load_policy, pseudonymize, redact_with_entropy, restricted_policy, restriction_error)
 from common.tlsserver import client_context  # noqa: E402
 from common.web import SECURITY_HEADERS, host_ok, origin_ok, token_ok  # noqa: E402
-from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, sha256_hex, \
-    sign  # noqa: E402
+from common.util import CONFIG_DIR, DATA_DIR, dumps, iso, like_contains, load_json, now_ms, parse_iso, save_json, \
+    sha256_hex, sign  # noqa: E402
 
 VERSION = "1.4.0"
 MAX_FUTURE_MS = 5000   # readings further ahead than this are treated as clock skew
@@ -102,9 +103,13 @@ class Collector:
         global METRIC_NAMES
         self.cfg = cfg
         self.cid = cfg["collector_id"]
-        self.policy = load_policy()
-        METRIC_NAMES = set(self.policy["metric_names"])
-        self.config_hash = sha256_hex(dumps({k: v for k, v in cfg.items() if k not in ("secret", "pseudonym_salt")}))[:12]
+        # the shared allow-list, made stricter by whatever this site withholds (never wider)
+        self.base_policy = load_policy()
+        METRIC_NAMES = set(self.base_policy["metric_names"])     # still aggregated locally when withheld
+        cfg["policy_restrictions"] = clean_restrictions(self.base_policy, cfg.get("policy_restrictions"))
+        self.policy = restricted_policy(self.base_policy, cfg["policy_restrictions"])
+        self.cfg_path = None                                      # set by main(): restrictions are saved there
+        self._rehash()
         self.started = time.time()
         self.lock = threading.RLock()
         ddir = os.path.join(DATA_DIR, "collectors", self.cid)
@@ -185,6 +190,38 @@ class Collector:
         for h in self.cfg["hosts"]:
             if self.source_id(h) == source_id:
                 return h
+        return None
+
+    def _rehash(self):
+        self.config_hash = sha256_hex(dumps({k: v for k, v in self.cfg.items() if k not in ("secret", "pseudonym_salt")}))[:12]
+
+    def allow_list(self):
+        """The allow-list as this site applies it, for the console."""
+        withheld = self.cfg["policy_restrictions"]
+        return {"policy_version": self.base_policy["policy_version"],
+                "withheld": sum(len(v) for v in withheld.values()),
+                "groups": [{"key": key, "label": label,
+                            "items": [{"name": n, "allowed": n not in withheld.get(key, []),
+                                       "locked": n in REQUIRED.get(key, ())} for n in self.base_policy[key]]}
+                           for key, label in TIGHTENABLE.items()]}
+
+    def set_allowed(self, key, name, allowed):
+        """Withhold (allowed=False) or allow again an item of the shared policy. Returns an error or None."""
+        err = restriction_error(self.base_policy, key, name)
+        if err:
+            return err
+        names = set(self.cfg["policy_restrictions"].get(key, []))
+        (names.discard if allowed else names.add)(name)
+        restrictions = dict(self.cfg["policy_restrictions"], **{key: sorted(names)})
+        self.cfg["policy_restrictions"] = clean_restrictions(self.base_policy, restrictions)
+        self.policy = restricted_policy(self.base_policy, self.cfg["policy_restrictions"])
+        self._rehash()
+        if self.cfg_path:                                         # persist only this setting
+            on_disk = load_json(self.cfg_path) or {}
+            on_disk["policy_restrictions"] = self.cfg["policy_restrictions"]
+            save_json(self.cfg_path, on_disk)
+        self.audit("operator", "allow_list", f"{TIGHTENABLE[key].lower()} '{name}' "
+                   + ("allowed again" if allowed else "withheld: no longer sent to the SaaS"))
         return None
 
     def source_meta(self, host):
@@ -674,6 +711,7 @@ class Collector:
             "region": self.region, "ingest": self.ingest_base, "link": self.link_state, "partition": self.partition,
             "chaos": self.chaos, "last_error": self.last_error, "stats": self.self_stats(), "counts": counts,
             "retention_min": self.cfg["raw_retention_min"], "tls": bool(self.ssl_ctx), "policy": self.policy,
+            "allow_list": self.allow_list(),
             "raw": [dict(zip(["id", "received_ms", "ts_ms", "host", "type", "raw", "redacted", "findings"], r)) for r in raw],
             "egress": [dict(zip(["payload_id", "seq", "kind", "created_ms", "sha256", "bytes", "status", "attempts",
                                  "delivered_ms", "dropped", "dlp", "note"], r)) for r in eg],
@@ -774,6 +812,11 @@ def make_handler(col):
                 col.chaos = bool(data.get("on"))
                 col.audit("operator", "chaos", f"duplicate/out-of-order delivery chaos {'ON' if col.chaos else 'OFF'}")
                 return self._send(200, {"chaos": col.chaos})
+            if self.path == "/api/allowlist":
+                err = col.set_allowed(str(data.get("key", "")), str(data.get("name", "")), bool(data.get("allowed")))
+                if err:
+                    return self._send(400, {"error": err})
+                return self._send(200, col.allow_list())
             if self.path == "/api/retention":
                 col.cfg["raw_retention_min"] = max(1, int(data.get("minutes", 60)))
                 col.audit("operator", "retention", f"raw retention set to {col.cfg['raw_retention_min']} min")
@@ -810,6 +853,7 @@ def main():
     if not cfg:
         sys.exit(f"config not found: {path} (run setup_env.py)")
     col = Collector(cfg)
+    col.cfg_path = path
     for fn in (col.flush_loop, col.sender_loop, col.heartbeat_loop, col.command_loop, col.retention_loop):
         threading.Thread(target=fn, daemon=True).start()
     SyslogUDP.col = col
