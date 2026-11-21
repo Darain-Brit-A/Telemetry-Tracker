@@ -31,6 +31,8 @@ SECRET_PATTERNS = [
     ("api_key", re.compile(r"\b(sk|pk|rk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{10,}\b"), "[REDACTED:api_key]"),
     ("kv_secret", re.compile(r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth)\s*[=:]\s*(\"[^\"]*\"|'[^']*'|[^\s,;&]+)"), r"\1=[REDACTED:secret]"),
     ("url_creds", re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s:/@]+:[^\s@/]+@"), r"\1[REDACTED:creds]@"),
+    # exact geographic position (e.g. an air-quality monitor's GPS coordinates): kept on the collector only
+    ("geo_location", re.compile(r'(?i)"(lat|latitude|lon|lng|longitude)"\s*:\s*-?\d{1,3}\.\d{3,}'), r'"\1": "[REDACTED:geo]"'),
     ("credit_card", re.compile(r"\b(?:\d[ -]?){13,16}\b"), "[REDACTED:pan]"),
     ("email", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "[REDACTED:email]"),
     ("ipv4", re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"), "[REDACTED:ip]"),
@@ -52,7 +54,7 @@ def redact_text(text):
 
 
 # DLP scan of the *serialized* outbound payload. Placeholders like [REDACTED:x] are fine.
-_DLP = [(n, rx) for n, rx, _ in SECRET_PATTERNS if n in CREDENTIAL_TYPES | {"credit_card", "email", "ipv4"}]
+_DLP = [(n, rx) for n, rx, _ in SECRET_PATTERNS if n in CREDENTIAL_TYPES | {"credit_card", "email", "ipv4", "geo_location"}]
 
 
 # Payload IDs are UUIDs. Their dash-separated groups can form a 13-19 digit, Luhn-valid run that looks

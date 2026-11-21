@@ -52,7 +52,7 @@
 
   <div class="card">
     <h2>Raw local events <span class="sub">Collector only; raw and redacted</span></h2>
-    <p class="small mut">Lines where something was redacted are pinned on top. Left: exactly what arrived from the source, secrets included. Right: the same line after local scrubbing. Neither column is ever transmitted; only aggregates and templated summaries leave.</p>
+    <p class="small mut">Lines where something was redacted are pinned on top. Left: exactly what arrived from the source, secrets included. Right: the same line after local scrubbing. Neither column is ever transmitted; only aggregates and templated summaries leave. Air-quality monitors also send their exact GPS position, which is treated as sensitive: it is kept here and never reaches the SaaS.</p>
     <div class="scroll table-wrap note">
       <table class="wide">
         <thead><tr><th class="col-time">Time (UTC)</th><th class="col-host">Host</th><th>Raw (local only)</th><th>Redacted view</th></tr></thead>

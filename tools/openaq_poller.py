@@ -98,14 +98,20 @@ def hourly_points(results, parameter, units):
     return sorted(pts)
 
 
-def to_events(host, meta, points_by_metric):
-    """{metric: [(ts, value)]} -> metric events, one per timestamp, in time order."""
+def to_events(host, meta, points_by_metric, coords=None):
+    """{metric: [(ts, value)]} -> metric events, one per timestamp, in time order.
+
+    `coords` is the monitor's exact GPS position. It is treated as SENSITIVE in this demo: it travels in
+    the raw event to the collector, which keeps it locally (redacted as geo_location) and never sends it
+    to the SaaS: it is not an allow-listed field, and the outbound DLP scan would catch it anyway."""
     by_ts = {}
     for metric, pts in points_by_metric.items():
         for ts, v in pts:
             by_ts.setdefault(ts, {})[metric] = v
-    return [{"type": "metric", "host": host, "role": meta.get("role", "air-monitor"),
-             "service": meta.get("service", host), "ts": iso(ts), "metrics": m} for ts, m in sorted(by_ts.items())]
+    extra = {"location": coords} if coords else {}
+    return [dict({"type": "metric", "host": host, "role": meta.get("role", "air-monitor"),
+                  "service": meta.get("service", host), "ts": iso(ts), "metrics": m}, **extra)
+            for ts, m in sorted(by_ts.items())]
 
 
 class Monitor:
@@ -114,6 +120,7 @@ class Monitor:
         self.meta = cfg["hosts"].get(host, {})
         self.sensors = {}          # sensor id -> (parameter, units)
         self.active = {}           # metric -> sensor id
+        self.coords = None         # exact GPS position (sensitive: stays on the collector)
         self.last_sent = {}        # metric -> newest measurement time sent
 
 
@@ -157,6 +164,9 @@ class Poller:
     def discover(self, m):
         loc = self.get(f"/locations/{m.location_id}")["results"][0]
         m.sensors = {s["id"]: (s["parameter"]["name"], s["parameter"]["units"]) for s in loc["sensors"]}
+        c = loc.get("coordinates") or {}
+        if c.get("latitude") is not None and c.get("longitude") is not None:
+            m.coords = {"latitude": c["latitude"], "longitude": c["longitude"]}
         latest = self.get(f"/locations/{m.location_id}/latest")["results"]
         act = active_sensors(latest, m.sensors, now_ms(), 24)
         m.active = {metric: sid for metric, (sid, _, _) in act.items()}
@@ -173,7 +183,7 @@ class Poller:
         for metric, (sid, v, ts) in active_sensors(latest, m.sensors, now_ms(), self.max_age_h).items():
             if sid == m.active.get(metric) and (not pts.get(metric) or ts > pts[metric][-1][0]):
                 pts.setdefault(metric, []).append((ts, v))
-        events = to_events(m.host, m.meta, pts)
+        events = to_events(m.host, m.meta, pts, m.coords)
         if dry_run or self.send(m, events):
             for metric, p in pts.items():
                 if p:
@@ -186,7 +196,7 @@ class Poller:
         for metric, (sid, v, ts) in active_sensors(latest, m.sensors, now_ms(), self.max_age_h).items():
             if sid == m.active.get(metric) and ts > m.last_sent.get(metric, 0):
                 fresh[metric] = [(ts, v)]
-        events = to_events(m.host, m.meta, fresh)
+        events = to_events(m.host, m.meta, fresh, m.coords)
         if events and self.send(m, events):
             for metric, p in fresh.items():
                 m.last_sent[metric] = p[-1][0]
