@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -56,9 +57,23 @@ class App:
         self.max_seq = {}
         self.ingest_port = self.reg["ingest_port"]
         self.scheme = "https" if self.reg.get("tls") else "http"
+        # Two-machine deployments: the ingest listener binds to a network interface (setup_env.py
+        # --saas-host sets 0.0.0.0) and collectors are told to reach it at the public host name / IP.
+        # The dashboard always stays on loopback.
+        self.ingest_bind = os.environ.get("AIOPS_INGEST_BIND") or self.reg.get("ingest_bind", "127.0.0.1")
+        self.public_host = os.environ.get("AIOPS_PUBLIC_HOST") or self.reg.get("ingest_public_host", "127.0.0.1")
+        # where each collector connects from (address of its last authenticated request), shown on the
+        # dashboard so a two-machine deployment is visible; addresses of this machine count as local
+        self.peers = {}
+        self.local_addrs = {"127.0.0.1", "::1", self.public_host}
+        try:
+            self.local_addrs |= {a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None)}
+        except OSError:
+            pass
 
     def ingest_url(self, region):
-        return f"{self.scheme}://127.0.0.1:{self.ingest_port}/r/{region}"
+        host = f"[{self.public_host}]" if ":" in self.public_host else self.public_host
+        return f"{self.scheme}://{host}:{self.ingest_port}/r/{region}"
 
     # ---------------------------------------------------------------- ingest
     def authenticate(self, h, body):
@@ -253,7 +268,9 @@ class App:
                              "tz": c["tz"], "stats": stats, "site": self.reg["collectors"].get(c["collector_id"], {}).get("site"),
                              "received": recv[0], "max_seq": recv[1], "missing": missing,
                              "duplicates_ignored": cc.get("duplicates_ignored", 0),
-                             "out_of_order": cc.get("out_of_order_payloads", 0)})
+                             "out_of_order": cc.get("out_of_order_payloads", 0),
+                             "remote_addr": (self.peers.get(c["collector_id"]) or {}).get("addr"),
+                             "remote_local": (self.peers.get(c["collector_id"]) or {}).get("addr") in self.local_addrs})
             sources = []
             for s in st.rows("SELECT * FROM sources WHERE tenant_id=? ORDER BY site, service, source_id", (t,)):
                 sid = s["source_id"]
@@ -292,6 +309,8 @@ class App:
                            "reason": tenant_state[1], "dependencies": T["dependencies"]},
                 "user": {"username": user["username"], "role": user["role"]},
                 "server_time": iso(), "newest_event_ms": newest, "collectors": cols, "sources": sources,
+                "saas": {"ingest": f"{self.scheme}://{self.public_host}:{self.ingest_port}",
+                         "network": self.ingest_bind not in ("127.0.0.1", "::1", "localhost")},
                 "incidents": incidents, "alerts": alerts, "history": history, "slo": eng.slo(t),
                 "counters": counters, "audit": audit, "thresholds": T["thresholds"], "health_settings": T["health"],
                 "threshold_modes": {k: (T.get("threshold_modes") or {}).get(k, "learned") for k in T["thresholds"]},
@@ -404,6 +423,7 @@ class IngestHandler(Base):
         if not ident:
             return self.send(401, {"error": why})
         cid, t = ident
+        APP.peers[cid] = {"addr": self.client_address[0], "ms": now_ms()}
         path = urllib.parse.urlsplit(self.path).path
         region = APP.reg["tenants"][t]["region"]
         if path == "/v1/discover":
@@ -617,12 +637,13 @@ def main():
         ctx = server_context(os.path.join(CERT_DIR, "server.crt"), os.path.join(CERT_DIR, "server.key"),
                              os.path.join(CERT_DIR, "ca.crt") if APP.reg.get("mtls") else None)
         # handshake per connection thread, never in accept() (bug B1)
-        ingest = TLSThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler, ctx)
+        ingest = TLSThreadingHTTPServer((APP.ingest_bind, APP.ingest_port), IngestHandler, ctx)
     else:
-        ingest = http.server.ThreadingHTTPServer(("127.0.0.1", APP.ingest_port), IngestHandler)
+        ingest = http.server.ThreadingHTTPServer((APP.ingest_bind, APP.ingest_port), IngestHandler)
     threading.Thread(target=ingest.serve_forever, daemon=True).start()
     dash = http.server.ThreadingHTTPServer(("127.0.0.1", APP.reg["dashboard_port"]), DashHandler)
-    print(f"[saas] ingest {APP.scheme}://127.0.0.1:{APP.ingest_port} (regions: {', '.join(APP.reg['regions'])})  "
+    print(f"[saas] ingest {APP.scheme}://{APP.public_host}:{APP.ingest_port} (listening on {APP.ingest_bind}; "
+          f"regions: {', '.join(APP.reg['regions'])})  "
           f"dashboard http://localhost:{APP.reg['dashboard_port']}", flush=True)
     try:
         dash.serve_forever()

@@ -4,9 +4,8 @@ data/
 __pycache__/
 *.pyc
 
-
-# 2-laptop version: the server copy (branch two-laptop) and the collector package contain
-# private keys, secrets and the OpenAQ key - never commit them
+# collector bundles and the 2-laptop server copy / collector package contain private keys,
+# collector secrets and the OpenAQ key - never commit them
 2 laptop version/server/
 2 laptop version/collector/
 2 laptop version/collector.zip

@@ -91,7 +91,7 @@ function render() {
   $('tname').textContent = T.name;
   $('tstate').className = 'pill s-' + T.state; $('tstate').textContent = T.state;
   $('tstate').title = T.reason;
-  $('hmeta').innerHTML = `<span>Residency ${esc(T.region)} (${esc(T.region_name)})</span><span>Server time ${fmtT(D.server_time)}</span>`;
+  $('hmeta').innerHTML = `<span>Residency ${esc(T.region)} (${esc(T.region_name)})</span>${tierLine()}<span>Server time ${fmtT(D.server_time)}</span>`;
   $('who').textContent = `${D.user.username} (${D.user.role})`;
   if (tab === 'ops') renderOps();
   if (tab === 'fleet') renderFleet();
@@ -265,6 +265,18 @@ async function renderMonitoring() {
   }
 }
 
+// where Tier 1 runs: collectors grouped by the address they connect from
+function tierLine() {
+  const cs = (D.collectors || []).filter(c => c.remote_addr);
+  if (!cs.length) return '';
+  const remote = [...new Set(cs.filter(c => !c.remote_local).map(c => c.remote_addr))];
+  const local = cs.filter(c => c.remote_local).length;
+  const parts = [];
+  if (remote.length) parts.push(`${cs.length - local} on ${remote.length === 1 ? 'another machine' : remote.length + ' other machines'} (${remote.map(esc).join(', ')})`);
+  if (local) parts.push(`${local} on this machine`);
+  return `<span title="Tier 1 collectors and where they connect from; SaaS ingest ${esc((D.saas || {}).ingest || '')}">Tier 1: ${parts.join(', ')}</span>`;
+}
+
 function renderOps() {
   renderMonitoring();
   const cnt = {Excellent: 0, Good: 0, Fair: 0, Poor: 0};
@@ -368,11 +380,12 @@ async function doAct(id, op) {
 }
 
 function renderFleet() {
-  $('collectors').innerHTML = D.collectors.length ? `<table><thead><tr><th>Collector</th><th>State</th><th>Last seen</th><th>Version</th><th>Resources</th><th class="num">Buffer</th><th>Sequence</th></tr></thead><tbody>${D.collectors.map(c => `
+  $('collectors').innerHTML = D.collectors.length ? `<table><thead><tr><th>Collector</th><th>State</th><th>Last seen</th><th>Version</th><th>Resources</th><th class="num">Buffer</th><th>Sequence</th><th>Connected from</th></tr></thead><tbody>${D.collectors.map(c => `
     <tr><td><span class="strong">${esc(c.collector_id)}</span><div class="small mut">${esc(c.site)}, ${esc(c.tz)}</div></td><td>${pill(c.state)}<div class="small mut">${esc(c.reason)}</div></td>
     <td>${c.age_s} s ago<div class="small mut">${fmtT(c.last_seen, c.tz)}</div></td><td>${esc(c.version)}<div class="small mut"><span class="mono">${esc(c.config_hash)}</span>, policy ${esc(c.policy_version)}</div></td>
     <td>CPU ${c.stats.cpu_pct ?? '–'}%<div class="small mut">${c.stats.rss_mb ?? '–'} MB memory</div></td><td class="num">${c.stats.buffer_depth ?? 0}</td>
-    <td>${c.stats.seq_created ?? '–'} created, ${c.received} received<div class="small ${c.missing ? 'bad' : 'mut'}">${c.missing ? c.missing + ' missing' : 'no gaps'}</div></td></tr>`).join('')}</tbody></table>`
+    <td>${c.stats.seq_created ?? '–'} created, ${c.received} received<div class="small ${c.missing ? 'bad' : 'mut'}">${c.missing ? c.missing + ' missing' : 'no gaps'}</div></td>
+    <td>${c.remote_addr ? `<span class="mono">${esc(c.remote_addr)}</span><div class="small mut">${c.remote_local ? 'This machine' : 'Another machine'}</div>` : '<span class="mut">–</span>'}</td></tr>`).join('')}</tbody></table>`
     : empty('No collector has connected yet.');
   const val = (L, k) => L[k] ? `${L[k].value} ${UNITS[k]}` : '–';
   $('sources').innerHTML = D.sources.length ? D.sources.map(s => {
