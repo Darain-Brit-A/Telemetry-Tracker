@@ -143,8 +143,11 @@ local findings, the audit log, and **"Prove it stayed local"** search.
 
 **Data allow-list.** The console lists every metric, event category, source label and event detail that
 may leave the site, as ticked boxes. The list is the policy shared with the SaaS (`common/data_policy.json`).
+Metrics are listed as this site's source sends them: an air-quality collector shows the three pollutants
+the OpenAQ API gives (`pm25_ugm3`, `pm10_ugm3`, `no2_ugm3`), a data-centre collector shows CPU, memory and
+so on; the other metrics the policy allows are named underneath.
 The customer can untick an item to stop sending it; the next payload leaves without it, the egress proof
-shows what was removed (for example `metrics 'mem_pct' (not allow-listed)`), the change is written to the
+shows what was removed (for example `metrics 'no2_ugm3' (not allow-listed)`), the change is written to the
 local audit log and saved in the collector's config, and the SaaS keeps accepting the smaller payloads.
 The customer cannot add anything: an item the shared policy does not contain, or a field the protocol needs
 (`source_id`, `ts`, `category`, `severity`, `count`), is refused. A new field needs a new policy version

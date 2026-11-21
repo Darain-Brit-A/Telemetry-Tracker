@@ -181,7 +181,7 @@ needs internet; the rest does not.
 | 10 | Console, *Simulate SaaS outage* for 20 s, then restore; Performance & reliability | "The collector buffered every payload and replayed it: no gaps, no duplicates." |
 | 11 | Sign in as `cityair-admin` | "Now real data: 16 official monitors in four cities. Delhi's evening pollution peaks, colour-coded by India's CPCB categories." |
 | 12 | Console :9104, raw events; then search a latitude | "Each monitor's exact GPS position is treated as sensitive. It is highlighted here, redacted on the right, and searching it on the SaaS finds zero matches, while all the readings are there." |
-| 13 | (optional) Console :9101, *Data allow-list*, untick `mem_pct`; open the newest metrics payload | "The customer decides what leaves, but only in one direction. Memory is now removed before the payload is hashed; the egress proof says so, the SaaS still accepts it, and the change is in the audit log. Tick it again to restore." |
+| 13 | (optional) Console :9104, *Data allow-list*: it lists the three pollutants the OpenAQ API gives. Untick `no2_ugm3`; open the newest metrics payload | "The customer decides what leaves, but only in one direction. NO2 is now removed before the payload is hashed; the egress proof says so, the SaaS still accepts PM2.5 and PM10, and the change is in the audit log. Tick it again to restore." |
 | 14 | (optional) Thresholds & audit | "Limits are learned per source by default; a safety limit always applies; every change is audited." |
 
 **If something goes wrong:** say what happened and move on. If the internet is down, skip steps 11 and 12;

@@ -79,6 +79,17 @@ class OnCollector(unittest.TestCase):
         self.assertIn("mem_pct", self.c.policy["metric_names"])
         self.assertEqual(self.c.allow_list()["withheld"], 0)
 
+    def test_lists_the_metrics_the_source_sends(self):
+        self.c.ingest({"type": "metric", "host": "silk-board", "role": "air-monitor", "service": "Silk Board",
+                       "ts": colmod.iso(now_ms() - 5000),
+                       "metrics": {"pm25_ugm3": 91.0, "pm10_ugm3": 150.0, "no2_ugm3": 40.0}})
+        self.c.set_allowed("metric_names", "cpu_pct", False)            # withheld items always stay visible
+        metrics = self.c.allow_list()["groups"][0]
+        self.assertEqual([i["name"] for i in metrics["items"]], ["cpu_pct", "pm25_ugm3", "pm10_ugm3", "no2_ugm3"])
+        self.assertIn("mem_pct", metrics["other"])
+        self.c.seen_metrics.clear()                                       # after a restart: from the raw store
+        self.assertEqual(self.c.received_metrics(), {"pm25_ugm3", "pm10_ugm3", "no2_ugm3"})
+
     def test_cannot_widen_through_the_api(self):
         self.assertIsNotNone(self.c.set_allowed("metric_names", "gps_lat", True))
         self.assertIsNotNone(self.c.set_allowed("event_fields", "ts", False))
