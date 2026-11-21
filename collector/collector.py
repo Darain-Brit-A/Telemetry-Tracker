@@ -109,6 +109,7 @@ class Collector:
         cfg["policy_restrictions"] = clean_restrictions(self.base_policy, cfg.get("policy_restrictions"))
         self.policy = restricted_policy(self.base_policy, cfg["policy_restrictions"])
         self.cfg_path = None                                      # set by main(): restrictions are saved there
+        self.seen_metrics = set()                                 # metric names this site's source really sends
         self._rehash()
         self.started = time.time()
         self.lock = threading.RLock()
@@ -195,15 +196,33 @@ class Collector:
     def _rehash(self):
         self.config_hash = sha256_hex(dumps({k: v for k, v in self.cfg.items() if k not in ("secret", "pseudonym_salt")}))[:12]
 
+    def received_metrics(self):
+        """Metric names this site's source actually sends (from the local raw store after a restart)."""
+        if not self.seen_metrics:
+            for (raw,) in self.q("SELECT raw FROM raw_events WHERE type='metric' ORDER BY id DESC LIMIT 500"):
+                try:
+                    self.seen_metrics.update(k for k in (json.loads(raw).get("metrics") or {}) if k in METRIC_NAMES)
+                except (ValueError, AttributeError):
+                    pass
+        return self.seen_metrics
+
     def allow_list(self):
-        """The allow-list as this site applies it, for the console."""
+        """The allow-list as this site applies it, for the console. Metrics: the ones this site's source
+        sends (and any withheld), so an air-quality site lists its pollutants, not CPU and memory."""
         withheld = self.cfg["policy_restrictions"]
+        received = self.received_metrics()
+        groups = []
+        for key, label in TIGHTENABLE.items():
+            names, other = self.base_policy[key], []
+            if key == "metric_names" and received:
+                shown = received | set(withheld.get(key, []))
+                other = [n for n in names if n not in shown]
+                names = [n for n in names if n in shown]
+            groups.append({"key": key, "label": label, "other": other,
+                           "items": [{"name": n, "allowed": n not in withheld.get(key, []),
+                                      "locked": n in REQUIRED.get(key, ())} for n in names]})
         return {"policy_version": self.base_policy["policy_version"],
-                "withheld": sum(len(v) for v in withheld.values()),
-                "groups": [{"key": key, "label": label,
-                            "items": [{"name": n, "allowed": n not in withheld.get(key, []),
-                                       "locked": n in REQUIRED.get(key, ())} for n in self.base_policy[key]]}
-                           for key, label in TIGHTENABLE.items()]}
+                "withheld": sum(len(v) for v in withheld.values()), "groups": groups}
 
     def set_allowed(self, key, name, allowed):
         """Withhold (allowed=False) or allow again an item of the shared policy. Returns an error or None."""
@@ -311,6 +330,7 @@ class Collector:
             for k, v in metrics.items():
                 if k in METRIC_NAMES and isinstance(v, (int, float)):
                     bucket[k].append(float(v))
+                    self.seen_metrics.add(k)
             # locally derived connectivity / availability events
             if metrics.get("reachable") == 0:
                 self._event_once(host, ts, "network.unreachable", "high", 1,

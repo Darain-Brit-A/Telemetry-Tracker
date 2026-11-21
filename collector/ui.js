@@ -44,7 +44,7 @@ function renderAllow(a){
   $('alsum').innerHTML=a.withheld?`This site withholds <span class="strong">${a.withheld}</span> item${a.withheld>1?'s':''} of the shared policy. The SaaS accepts the smaller payloads unchanged.`
     :'This site sends everything the shared policy allows.';
   $('allow').innerHTML=a.groups.map(g=>`<fieldset><legend>${esc(g.label)}</legend>${g.items.map(i=>
-    `<label class="${i.allowed?'':'off'}"><input type="checkbox" data-key="${esc(g.key)}" value="${esc(i.name)}"${i.allowed?' checked':''}${i.locked?' disabled':''}> <span class="mono">${esc(i.name)}</span>${i.locked?'<span class="req">Required</span>':''}</label>`).join('')}</fieldset>`).join('');
+    `<label class="${i.allowed?'':'off'}"><input type="checkbox" data-key="${esc(g.key)}" value="${esc(i.name)}"${i.allowed?' checked':''}${i.locked?' disabled':''}> <span class="mono">${esc(i.name)}</span>${i.locked?'<span class="req">Required</span>':''}</label>`).join('')}${g.other.length?`<p class="small mut note">Also allowed by the shared policy, not sent by this site's source: ${g.other.map(esc).join(', ')}.</p>`:''}</fieldset>`).join('');
 }
 async function setAllowed(el){
   const r=await post('/api/allowlist',{key:el.dataset.key,name:el.value,allowed:el.checked});
