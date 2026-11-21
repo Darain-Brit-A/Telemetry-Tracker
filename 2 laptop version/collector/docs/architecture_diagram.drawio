@@ -1,5 +1,5 @@
-<mxfile host="app.diagrams.net" modified="2026-11-20T16:15:00.000Z" agent="AegisOps" version="24.7.17" type="device">
-  <diagram id="aegisops-two-tier-arch" name="Architecture">
+<mxfile host="app.diagrams.net" modified="2026-11-20T16:15:00.000Z" agent="TeleTracker" version="24.7.17" type="device">
+  <diagram id="teletracker-two-tier-arch" name="Architecture">
     <mxGraphModel dx="1080" dy="1040" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="780" pageHeight="980" background="#ffffff" math="0" shadow="0">
       <root>
         <mxCell id="0" />

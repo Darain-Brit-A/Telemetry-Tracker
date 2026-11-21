@@ -1,4 +1,4 @@
-# Complete guide: Secure AIOps Observability
+# Complete guide: TeleTracker
 
 Everything in one place: what the system is, how to run it on one laptop or two, what to show, how the AI
 works, how it is secured, how to prove it works, and what to do when something goes wrong.
@@ -28,7 +28,7 @@ works, how it is secured, how to prove it works, and what to do when something g
 
 ## 1. What this is
 
-A **two-tier, local-first, metadata-only** observability and AIOps platform.
+**TeleTracker** is a **two-tier, local-first, metadata-only** observability and AIOps platform.
 
 * **Tier 1, the collector**, runs inside each customer site. It receives raw telemetry (metrics, logs,
   login records, syslog), keeps the raw data **on site**, and sends only **allow-listed metadata** upward:
@@ -304,7 +304,7 @@ is opened, protected by mutual TLS and signatures. Both laptops must be on the *
    **PowerShell as Administrator**, allow the port:
 
    ```powershell
-   New-NetFirewallRule -DisplayName "AIOps SaaS ingest 8443" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private
+   New-NetFirewallRule -DisplayName "TeleTracker SaaS ingest 8443" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private
    ```
 
 4. Export all collectors as one bundle (written to the git-ignored `export` folder):
@@ -360,7 +360,7 @@ You can also move only some collectors: export just those, start laptop A with
 **Afterwards:** remove the firewall rule (as Administrator) and switch laptop A back to single-machine mode:
 
 ```powershell
-Remove-NetFirewallRule -DisplayName "AIOps SaaS ingest 8443"
+Remove-NetFirewallRule -DisplayName "TeleTracker SaaS ingest 8443"
 ```
 ```powershell
 python setup_env.py --saas-host local

@@ -1,4 +1,4 @@
-"""Tier 1 - Local Collector (runs inside the customer environment).
+"""TeleTracker Tier 1 - Local Collector (runs inside the customer environment).
 
 Pipeline:  collect -> filter/redact -> aggregate -> analyze locally -> apply data policy -> transmit
 
@@ -506,7 +506,7 @@ class Collector:
         ts = str(int(time.time()))
         req = urllib.request.Request(url, data=body if method == "POST" else None, method=method, headers={
             "Content-Type": "application/json", "X-Collector-Id": self.cid, "X-Timestamp": ts,
-            "X-Signature": sign(self.cfg["secret"], method, path, body, ts), "User-Agent": f"aiops-collector/{VERSION}"})
+            "X-Signature": sign(self.cfg["secret"], method, path, body, ts), "User-Agent": f"teletracker-collector/{VERSION}"})
         with self.opener.open(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
 

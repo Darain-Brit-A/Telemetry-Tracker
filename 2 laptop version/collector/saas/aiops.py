@@ -1,4 +1,4 @@
-"""AIOps engine (Tier 2) - works on metadata only.
+"""TeleTracker AIOps engine (Tier 2) - works on metadata only.
 
 Observe -> Detect -> Correlate -> Recommend -> (simulated, approved) Act
 

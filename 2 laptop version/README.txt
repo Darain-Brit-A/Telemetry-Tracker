@@ -1,5 +1,5 @@
-AIOps - 2 laptop version
-========================
+TeleTracker - 2 laptop version
+==============================
 
 This laptop = SERVER (Tier 2: dashboard, database, AI engine)
 Other laptop = COLLECTOR (Tier 1: reads the live OpenAQ air-quality API and the simulated servers,
@@ -50,9 +50,9 @@ IF IT DOES NOT CONNECT
 ------------------------------------------------------------------
 * The collector window says it cannot reach the server:
   On THIS laptop, open PowerShell as Administrator and run once:
-      New-NetFirewallRule -DisplayName "AIOps 2-laptop" -Direction Inbound -Program (Get-Command python).Source -Action Allow -Profile Any
+      New-NetFirewallRule -DisplayName "TeleTracker 2-laptop" -Direction Inbound -Program (Get-Command python).Source -Action Allow -Profile Any
   (allows Python to accept the collector's connection; remove it later with
-   Remove-NetFirewallRule -DisplayName "AIOps 2-laptop")
+   Remove-NetFirewallRule -DisplayName "TeleTracker 2-laptop")
 * Both laptops must be on the same network. Some phone hotspots stop devices from talking to
   each other; if so, use a normal Wi-Fi router.
 * "timestamp outside allowed skew": set both laptops' clocks to the correct time.

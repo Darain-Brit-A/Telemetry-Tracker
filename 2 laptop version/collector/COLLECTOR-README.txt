@@ -1,8 +1,8 @@
 Start everything in this bundle with:
     python run_all.py --collector col-acme-cloud --collector col-acme-dc1 --collector col-air-blr --collector col-air-bom --collector col-air-del --collector col-air-maa --collector col-globex-nyc
 
-Collector col-acme-cloud (fra-cloud) - run on this machine
-=================================================
+TeleTracker Collector col-acme-cloud (fra-cloud) - run on this machine
+======================================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git
@@ -24,8 +24,8 @@ Clocks on both machines must be within 5 minutes of each other (request signatur
 This zip contains the collector's secret and private key: delete it once unpacked.
 
 
-Collector col-acme-dc1 (blr-dc1) - run on this machine
-=================================================
+TeleTracker Collector col-acme-dc1 (blr-dc1) - run on this machine
+==================================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git
@@ -47,8 +47,8 @@ Clocks on both machines must be within 5 minutes of each other (request signatur
 This zip contains the collector's secret and private key: delete it once unpacked.
 
 
-Collector col-air-blr (Bengaluru) - run on this machine
-=================================================
+TeleTracker Collector col-air-blr (Bengaluru) - run on this machine
+===================================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git
@@ -70,8 +70,8 @@ Clocks on both machines must be within 5 minutes of each other (request signatur
 This zip contains the collector's secret and private key: delete it once unpacked.
 
 
-Collector col-air-bom (Mumbai) - run on this machine
-=================================================
+TeleTracker Collector col-air-bom (Mumbai) - run on this machine
+================================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git
@@ -93,8 +93,8 @@ Clocks on both machines must be within 5 minutes of each other (request signatur
 This zip contains the collector's secret and private key: delete it once unpacked.
 
 
-Collector col-air-del (Delhi) - run on this machine
-=================================================
+TeleTracker Collector col-air-del (Delhi) - run on this machine
+===============================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git
@@ -116,8 +116,8 @@ Clocks on both machines must be within 5 minutes of each other (request signatur
 This zip contains the collector's secret and private key: delete it once unpacked.
 
 
-Collector col-air-maa (Chennai) - run on this machine
-=================================================
+TeleTracker Collector col-air-maa (Chennai) - run on this machine
+=================================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git
@@ -139,8 +139,8 @@ Clocks on both machines must be within 5 minutes of each other (request signatur
 This zip contains the collector's secret and private key: delete it once unpacked.
 
 
-Collector col-globex-nyc (nyc-dc) - run on this machine
-=================================================
+TeleTracker Collector col-globex-nyc (nyc-dc) - run on this machine
+===================================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git

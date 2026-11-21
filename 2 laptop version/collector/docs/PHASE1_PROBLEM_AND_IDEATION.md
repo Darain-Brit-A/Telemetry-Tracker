@@ -1,7 +1,7 @@
 # Phase 1: Problem Understanding and Ideation
 
 CICADA 2026, Smart Observability track.
-Project: two-tier, local-first AIOps observability platform.
+Project: TeleTracker — two-tier, local-first AIOps observability platform.
 
 This document covers what the Phase 1 checkpoint asks for: our understanding of the problem, the
 use cases we picked, the feature list and minimum demo, what stays local and what is sent, how

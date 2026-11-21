@@ -1,5 +1,5 @@
-AIOps Tier 1 - collector laptop
-==============================
+TeleTracker Tier 1 - collector laptop
+=====================================
 
 1. Install Python 3.12 or newer from python.org (tick "Add Python to PATH").
 2. Connect this laptop to the SAME Wi-Fi / hotspot as the server laptop.

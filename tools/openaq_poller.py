@@ -136,7 +136,7 @@ class Poller:
             time.sleep(wait)
         self._last_request = time.time()
         req = urllib.request.Request(API + path, headers={"X-API-Key": self.key, "Accept": "application/json",
-                                                          "User-Agent": "aiops-observability/1.0"})
+                                                          "User-Agent": "teletracker/1.0"})
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 return json.loads(r.read())

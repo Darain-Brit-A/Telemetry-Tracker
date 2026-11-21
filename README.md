@@ -1,6 +1,6 @@
-# Secure AIOps Observability: two-tier, local-first, metadata-only
+# TeleTracker: two-tier, local-first, metadata-only observability
 
-CICADA 2026 hackathon build. A **local collector** runs inside each customer environment. It keeps
+**TeleTracker** (CICADA 2026 hackathon build). A **local collector** runs inside each customer environment. It keeps
 raw logs, payloads, identities and secrets on site and sends only allow-listed metadata to a
 **multi-tenant SaaS**. The SaaS turns that metadata into health states, correlated incidents and
 explained, policy-gated remediation recommendations.

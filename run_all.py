@@ -1,4 +1,4 @@
-"""Start the whole demo: SaaS (Tier 2), three collectors (Tier 1) and the telemetry simulator.
+"""Start TeleTracker: SaaS (Tier 2), collectors (Tier 1) and the telemetry simulator.
 
     python run_all.py            # start (runs setup on first use)
     python run_all.py --fresh    # wipe stored data first (keeps certs/secrets)
@@ -110,7 +110,7 @@ def main():
         if air and not any(n == "openaq" for n, _ in plan):
             print("  !! live air collector without an OpenAQ key: create config/pollution.json on this machine")
     else:
-        print("\n  SaaS dashboard : http://localhost:8080   (acme-admin / acme-admin-demo, globex-admin / globex-admin-demo)")
+        print("\n  TeleTracker UI : http://localhost:8080   (acme-admin / acme-admin-demo, globex-admin / globex-admin-demo)")
         if reg.get("ingest_public_host", "127.0.0.1") != "127.0.0.1":
             print(f"  SaaS ingest    : https://{reg['ingest_public_host']}:{reg.get('ingest_port', 8443)}  (collectors on other machines)")
         if cols:

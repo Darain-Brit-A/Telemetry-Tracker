@@ -1,8 +1,8 @@
 # Master Specification: Machine Learning & Intelligent Privacy Architecture
 
-> **Project:** End-to-end, secure AIOps observability delivering autonomous insights across enterprise, data center, cloud, and distributed architectures  
+> **Project:** TeleTracker — end-to-end, secure AIOps observability delivering autonomous insights across enterprise, data center, cloud, and distributed architectures  
 > **Event:** CICADA 2026 Hackathon | TechForcz x Atria Institute of Technology  
-> **Repository:** `Telemetry-Tracker`  
+> **Repository:** `Telemetry-Tracker` (project name: **TeleTracker**)  
 > **Target Components:** `common/policy.py`, `saas/aiops.py`, `collector/collector.py`  
 > **Test Suites:** `tests/test_policy.py`, `tests/test_engine.py`
 

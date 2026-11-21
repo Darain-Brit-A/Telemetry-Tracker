@@ -1,4 +1,4 @@
-# Live demo script (Phase 4)
+# TeleTracker — Live demo script (Phase 4)
 
 Setup: `python run_all.py --fresh`. Put the **collector console** (http://127.0.0.1:9101) and the
 **SaaS dashboard** (http://localhost:8080, `acme-admin`) side by side. Wait about 40 s for baselines.

@@ -1,4 +1,4 @@
-# Architecture & technical design (Phase 2)
+# TeleTracker — Architecture & technical design (Phase 2)
 
 ## 1. Two tiers and the trust boundary
 

@@ -1,4 +1,4 @@
-# Securing Telemetry-Tracker from host to SaaS
+# Securing TeleTracker from host to SaaS
 
 This document describes what the code in this repository **actually does** to protect telemetry on its way
 from a customer host to the SaaS, what it still does not do, and what a real deployment would add. Every

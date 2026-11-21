@@ -1,4 +1,4 @@
-# AegisOps Frontend Design System (`DESIGN.md`)
+# TeleTracker Frontend Design System (`DESIGN.md`)
 
 Guide for contributors working on the **Tier 2 SaaS Dashboard** (`saas/static/`) and **Tier 1 Local Collector Console** (`collector/ui.html`, `collector/ui.js`).
 

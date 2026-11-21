@@ -1,4 +1,4 @@
-"""Two-laptop mode with the fewest possible steps: this machine is the SaaS (Tier 2), another laptop runs
+"""TeleTracker two-laptop mode with the fewest possible steps: this machine is the SaaS (Tier 2), another laptop runs
 the collectors (Tier 1) and sends to it over the network.
 
     python tools/two_laptop.py package     # on the server, once: builds ..\\collector and ..\\collector.zip
@@ -38,14 +38,14 @@ ASK, ANSWER = b"AIOPS-DISCOVER?", b"AIOPS-HERE "
 PACKAGE_MARK = ".aiops-collector-package"
 
 START_COLLECTOR_BAT = r"""@echo off
-title AIOps Tier 1 (collector)
+title TeleTracker Tier 1 (collector)
 cd /d "%~dp0"
 python tools\two_laptop.py collector
 pause
 """
 
-COLLECTOR_README = """AIOps Tier 1 - collector laptop
-==============================
+COLLECTOR_README = """TeleTracker Tier 1 - collector laptop
+=====================================
 
 1. Install Python 3.12 or newer from python.org (tick "Add Python to PATH").
 2. Connect this laptop to the SAME Wi-Fi / hotspot as the server laptop.
@@ -112,7 +112,7 @@ def server(args):
     stop = threading.Event()
     threading.Thread(target=discovery_responder, args=(ip, stop), daemon=True).start()
     line = "=" * 64
-    print(f"\n{line}\n  TIER 2 READY on this laptop\n  collectors send to : https://{ip}:{INGEST_PORT}\n"
+    print(f"\n{line}\n  TeleTracker TIER 2 READY on this laptop\n  collectors send to : https://{ip}:{INGEST_PORT}\n"
           f"  dashboard          : http://localhost:8080   (acme-admin / acme-admin-demo,\n"
           f"                       cityair-admin / cityair-admin-demo)\n"
           f"  other laptop       : double-click start_collector.bat\n{line}\n", flush=True)
@@ -235,7 +235,7 @@ def collector(args):
         if not reachable(host, port):
             sys.exit(f"Still cannot reach {host}:{port}.")
     url = point_collectors_at(host, port)
-    print(f"\nTIER 1 starting: {len(ids)} collectors -> {url}\n", flush=True)
+    print(f"\nTeleTracker TIER 1 starting: {len(ids)} collectors -> {url}\n", flush=True)
     cmd = [PY, os.path.join(ROOT, "run_all.py")] + [x for cid in ids for x in ("--collector", cid)]
     try:
         subprocess.run(cmd, cwd=ROOT)

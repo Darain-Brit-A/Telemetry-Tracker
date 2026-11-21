@@ -28,8 +28,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from common.util import CONFIG_DIR, load_json  # noqa: E402
 
-README = """Collector {cid} ({site}) - run on this machine
-=================================================
+README = """TeleTracker Collector {cid} ({site}) - run on this machine
+=============================================================
 
 1. Get the project code on this machine (same version as the SaaS machine), e.g.
        git clone https://github.com/Darain-Brit-A/Telemetry-Tracker.git

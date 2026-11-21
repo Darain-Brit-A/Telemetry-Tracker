@@ -2,13 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "aiops-demo",
+      "name": "teletracker-demo",
       "runtimeExecutable": "python",
       "runtimeArgs": ["run_all.py", "--fresh"],
       "port": 8080
     },
     {
-      "name": "aiops-tier2-only",
+      "name": "teletracker-tier2-only",
       "runtimeExecutable": "python",
       "runtimeArgs": ["run_all.py", "--saas-only", "--fresh"],
       "port": 8080

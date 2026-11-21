@@ -1,4 +1,4 @@
-"""Tier 2 - Central multi-tenant SaaS platform (metadata only).
+"""TeleTracker Tier 2 - Central multi-tenant SaaS platform (metadata only).
 
 Two listeners:
   * Ingest  (TLS, :8443)  - collector-facing, HMAC-authenticated, regional paths /r/<region>/v1/...

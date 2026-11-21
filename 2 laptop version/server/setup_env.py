@@ -185,7 +185,7 @@ def make_certs(force, collector_ids, saas_host=None):
 
     if not have_ca:
         run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", ca_key, "-out", "ca.crt",
-            "-days", "365", "-subj", "/CN=AIOps Demo Root CA",
+            "-days", "365", "-subj", "/CN=TeleTracker Demo Root CA",
             "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
             "-addext", "subjectKeyIdentifier=hash")
     if not have_ca or have_san != want_san:

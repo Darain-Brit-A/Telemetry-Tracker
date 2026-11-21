@@ -1,4 +1,4 @@
-# Running the collector and the SaaS on two laptops
+# Running TeleTracker on two laptops (collector and SaaS)
 
 The two tiers are separate programs that only talk over one HTTPS connection, so they can run on different
 machines: **laptop A** runs the SaaS (dashboard, database, AI engine), **laptop B** runs a collector (and
@@ -49,11 +49,11 @@ through the laptop's Wi-Fi address, and the SaaS dashboard showed the collector 
    network profile only):
 
    ```powershell
-   New-NetFirewallRule -DisplayName "AIOps SaaS ingest 8443" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private
+   New-NetFirewallRule -DisplayName "TeleTracker SaaS ingest 8443" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private
    ```
 
    Make sure the Wi-Fi network is set to *Private* in Windows settings. Remove the rule when you are done:
-   `Remove-NetFirewallRule -DisplayName "AIOps SaaS ingest 8443"`.
+   `Remove-NetFirewallRule -DisplayName "TeleTracker SaaS ingest 8443"`.
 
 4. **Export the collector** that will run on laptop B:
 

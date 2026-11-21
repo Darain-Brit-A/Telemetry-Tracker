@@ -1,4 +1,4 @@
-# Viva script: Secure AIOps Observability
+# Viva script: TeleTracker
 
 A speaking script for every phase, the questions judges are likely to ask with short, honest answers, a
 live demo order, and a numbers cheat sheet. Lines in quotes are meant to be said more or less as written;
@@ -10,8 +10,8 @@ A collector and data protection, B SaaS ingest and reliability, C AIOps, D dashb
 ## 0. The 30-second pitch (anyone, first thing)
 
 > "Companies want one place to watch their servers, networks and security events, but their logs are full
-> of passwords, tokens, usernames and customer data that should never leave the building. We built a
-> two-tier AIOps platform where a collector inside the customer's network keeps all raw data local and
+> of passwords, tokens, usernames and customer data that should never leave the building. We built
+> TeleTracker, a two-tier AIOps platform where a collector inside the customer's network keeps all raw data local and
 > sends only allow-listed numbers and counts to a multi-tenant SaaS. The SaaS learns what is normal for
 > every source, detects anomalies, groups alerts into incidents, names the likely root cause and
 > recommends a safe, approved action. And it works on real, live data: 16 official air-quality monitors in

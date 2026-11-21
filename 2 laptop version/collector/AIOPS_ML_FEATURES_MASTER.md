@@ -1,7 +1,7 @@
 # ML and statistical features: proposal
 
-> **Project:** End-to-end, secure AIOps observability (CICADA 2026, TechForcz x Atria Institute of Technology)
-> **Repository:** `Telemetry-Tracker`
+> **Project:** TeleTracker — end-to-end, secure AIOps observability (CICADA 2026, TechForcz x Atria Institute of Technology)
+> **Repository:** `Telemetry-Tracker` (project name: **TeleTracker**)
 > **Status:** **implemented** (commits `4435372` feature 2, `1fafb34` feature 1, `822b80f` feature 3), with the
 > measured results below. Revision 2 of the design was written after testing the first draft against real
 > data; a few details changed again while building and are marked "As built".
